@@ -1,0 +1,20 @@
+{
+  "dataset_name": "sample_eval",
+  "created_at": "2026-01-06T14:00:37.006467+00:00",
+  "metrics": {
+    "n": 5,
+    "exact_match": null,
+    "contains_match": null,
+    "avg_latency_ms": 3.2,
+    "evidence_hit_rate": null,
+    "extra": {
+      "success_count": 5,
+      "success_rate": 1.0
+    }
+  },
+  "summary": {
+    "total_questions": 5,
+    "success_rate": 1.0,
+    "avg_latency_ms": 3.2
+  }
+}

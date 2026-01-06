@@ -6,7 +6,7 @@ from .schemas import (
     AppConfig, QueryInput, RetrievalResult, EvidenceSelectionResult,
     GenerationRequest, GenerationResult, QueryRunRecord, RunStatus
 )
-from .interfaces import Retriever, Reranker, EvidenceSelector, Generator, RunLogger
+from .inferences import Retriever, Reranker, EvidenceSelector, Generator, RunLogger
 
 
 class Pipeline:

@@ -1,0 +1,401 @@
+qid,question,answer_pred,cited_units,latency_ms,status_ok,error_type
+q1,What is the main topic of the document?,"Based on the retrieved evidence, here's what I found regarding 'What is the main topic of the document?':
+
+
+[1] ! "" # $ % & ’ ’ ( ) *
+犌犅１８８６．３—２０２１
+!""#$%&’(
+!"")*+ ,-./
+２０２１０２２２ ２０２１０８２２
+01 23
+!""#$%&’’(+,-./01
+0 1
+’ ( 2 3 4 5 6 7 8 9
+书书书
+
+[2] 犌犅１８８６．３—２０２１
+! ""
+ＧＢ１８８６．３—２０１６《 》。
+!""#$% &’()*+""# &’,-. /012
+ＧＢ１８８６．３—２０１６ ， ：
+!""#3 45 6789:;
+——— ；
+<=>?@
+——— ；
+A->BC/012DE
+——— “ ”；
+FGHIJK""<=L MNOP
+——— “ ” “ ”；
+F QRSJ <=L QRTJ
+——— “ （ Ｆ ）” “ （Ｆ）”；
+...
+
+[3] 犌犅１８８６．３—２０２１
+#$%&’()*
+#$+,- ./01
+１
+23
+（ 、 ） （ ）
+!""#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’
+。
+,-./012
+２
+45678945:;
+２．１
+456
+：ＣａＨＰＯ ·２Ｈ Ｏ
+aC/012 ４ ２
+：ＣａＨＰＯ
+BC/012 ４
+２．２
+8945:;
+：１７２．０９（ ２０１８ ）
+aC/012 s...
+
+[4] 犌犅１８８６．３—２０２１
+２（ ）
+B (cid:157)
+K ""
+(cid:129) (cid:130) Z[\]
+aC/012 BC/012
+，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４
+QRTJ (cid:155)(cid:156) (cid:147)
+（ ），狑／％ ≤ ０．０５ Ａ Ａ．５
+(cid:158)0(cid:159)(cid:160)V MNOP (cid:15...
+
+[5] 犌犅１８８６．３—２０２１
+犃
+F G
+HIJK
+： ， 。
+LM NHIJKOPQRS4T-UVWXYZ[X \]^_‘abcR%&7defg h
+， 。 ， 。
+>^ _ijklOmn opqrst_uvQwxy z{|_uv}~
+犃．１
+(cid:127)(cid:128)(cid:129)(cid:130)
+， ＧＢ／Ｔ６６８２ 。
+!""#¡i(cid:143).mC(cid:148)¢£...
+
+
+
+This information is drawn from 5 document section(s). For full context, please refer to the evidence citations above.","p0000_b0000,p0001_b0000,p0002_b0000,p0003_b0000,p0004_b0000",5,True,
+q2,What are the key findings?,"Based on the retrieved evidence, here's what I found regarding 'What are the key findings?':
+
+
+[1] ! "" # $ % & ’ ’ ( ) *
+犌犅１８８６．３—２０２１
+!""#$%&’(
+!"")*+ ,-./
+２０２１０２２２ ２０２１０８２２
+01 23
+!""#$%&’’(+,-./01
+0 1
+’ ( 2 3 4 5 6 7 8 9
+书书书
+
+[2] 犌犅１８８６．３—２０２１
+! ""
+ＧＢ１８８６．３—２０１６《 》。
+!""#$% &’()*+""# &’,-. /012
+ＧＢ１８８６．３—２０１６ ， ：
+!""#3 45 6789:;
+——— ；
+<=>?@
+——— ；
+A->BC/012DE
+——— “ ”；
+FGHIJK""<=L MNOP
+——— “ ” “ ”；
+F QRSJ <=L QRTJ
+——— “ （ Ｆ ）” “ （Ｆ）”；
+...
+
+[3] 犌犅１８８６．３—２０２１
+#$%&’()*
+#$+,- ./01
+１
+23
+（ 、 ） （ ）
+!""#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’
+。
+,-./012
+２
+45678945:;
+２．１
+456
+：ＣａＨＰＯ ·２Ｈ Ｏ
+aC/012 ４ ２
+：ＣａＨＰＯ
+BC/012 ４
+２．２
+8945:;
+：１７２．０９（ ２０１８ ）
+aC/012 s...
+
+[4] 犌犅１８８６．３—２０２１
+２（ ）
+B (cid:157)
+K ""
+(cid:129) (cid:130) Z[\]
+aC/012 BC/012
+，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４
+QRTJ (cid:155)(cid:156) (cid:147)
+（ ），狑／％ ≤ ０．０５ Ａ Ａ．５
+(cid:158)0(cid:159)(cid:160)V MNOP (cid:15...
+
+[5] 犌犅１８８６．３—２０２１
+犃
+F G
+HIJK
+： ， 。
+LM NHIJKOPQRS4T-UVWXYZ[X \]^_‘abcR%&7defg h
+， 。 ， 。
+>^ _ijklOmn opqrst_uvQwxy z{|_uv}~
+犃．１
+(cid:127)(cid:128)(cid:129)(cid:130)
+， ＧＢ／Ｔ６６８２ 。
+!""#¡i(cid:143).mC(cid:148)¢£...
+
+
+
+This information is drawn from 5 document section(s). For full context, please refer to the evidence citations above.","p0000_b0000,p0001_b0000,p0002_b0000,p0003_b0000,p0004_b0000",5,True,
+q3,Who are the authors?,"Based on the retrieved evidence, here's what I found regarding 'Who are the authors?':
+
+
+[1] ! "" # $ % & ’ ’ ( ) *
+犌犅１８８６．３—２０２１
+!""#$%&’(
+!"")*+ ,-./
+２０２１０２２２ ２０２１０８２２
+01 23
+!""#$%&’’(+,-./01
+0 1
+’ ( 2 3 4 5 6 7 8 9
+书书书
+
+[2] 犌犅１８８６．３—２０２１
+! ""
+ＧＢ１８８６．３—２０１６《 》。
+!""#$% &’()*+""# &’,-. /012
+ＧＢ１８８６．３—２０１６ ， ：
+!""#3 45 6789:;
+——— ；
+<=>?@
+——— ；
+A->BC/012DE
+——— “ ”；
+FGHIJK""<=L MNOP
+——— “ ” “ ”；
+F QRSJ <=L QRTJ
+——— “ （ Ｆ ）” “ （Ｆ）”；
+...
+
+[3] 犌犅１８８６．３—２０２１
+#$%&’()*
+#$+,- ./01
+１
+23
+（ 、 ） （ ）
+!""#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’
+。
+,-./012
+２
+45678945:;
+２．１
+456
+：ＣａＨＰＯ ·２Ｈ Ｏ
+aC/012 ４ ２
+：ＣａＨＰＯ
+BC/012 ４
+２．２
+8945:;
+：１７２．０９（ ２０１８ ）
+aC/012 s...
+
+[4] 犌犅１８８６．３—２０２１
+２（ ）
+B (cid:157)
+K ""
+(cid:129) (cid:130) Z[\]
+aC/012 BC/012
+，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４
+QRTJ (cid:155)(cid:156) (cid:147)
+（ ），狑／％ ≤ ０．０５ Ａ Ａ．５
+(cid:158)0(cid:159)(cid:160)V MNOP (cid:15...
+
+[5] 犌犅１８８６．３—２０２１
+犃
+F G
+HIJK
+： ， 。
+LM NHIJKOPQRS4T-UVWXYZ[X \]^_‘abcR%&7defg h
+， 。 ， 。
+>^ _ijklOmn opqrst_uvQwxy z{|_uv}~
+犃．１
+(cid:127)(cid:128)(cid:129)(cid:130)
+， ＧＢ／Ｔ６６８２ 。
+!""#¡i(cid:143).mC(cid:148)¢£...
+
+
+
+This information is drawn from 5 document section(s). For full context, please refer to the evidence citations above.","p0000_b0000,p0001_b0000,p0002_b0000,p0003_b0000,p0004_b0000",2,True,
+q4,What is the publication date?,"Based on the retrieved evidence, here's what I found regarding 'What is the publication date?':
+
+
+[1] ! "" # $ % & ’ ’ ( ) *
+犌犅１８８６．３—２０２１
+!""#$%&’(
+!"")*+ ,-./
+２０２１０２２２ ２０２１０８２２
+01 23
+!""#$%&’’(+,-./01
+0 1
+’ ( 2 3 4 5 6 7 8 9
+书书书
+
+[2] 犌犅１８８６．３—２０２１
+! ""
+ＧＢ１８８６．３—２０１６《 》。
+!""#$% &’()*+""# &’,-. /012
+ＧＢ１８８６．３—２０１６ ， ：
+!""#3 45 6789:;
+——— ；
+<=>?@
+——— ；
+A->BC/012DE
+——— “ ”；
+FGHIJK""<=L MNOP
+——— “ ” “ ”；
+F QRSJ <=L QRTJ
+——— “ （ Ｆ ）” “ （Ｆ）”；
+...
+
+[3] 犌犅１８８６．３—２０２１
+#$%&’()*
+#$+,- ./01
+１
+23
+（ 、 ） （ ）
+!""#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’
+。
+,-./012
+２
+45678945:;
+２．１
+456
+：ＣａＨＰＯ ·２Ｈ Ｏ
+aC/012 ４ ２
+：ＣａＨＰＯ
+BC/012 ４
+２．２
+8945:;
+：１７２．０９（ ２０１８ ）
+aC/012 s...
+
+[4] 犌犅１８８６．３—２０２１
+２（ ）
+B (cid:157)
+K ""
+(cid:129) (cid:130) Z[\]
+aC/012 BC/012
+，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４
+QRTJ (cid:155)(cid:156) (cid:147)
+（ ），狑／％ ≤ ０．０５ Ａ Ａ．５
+(cid:158)0(cid:159)(cid:160)V MNOP (cid:15...
+
+[5] 犌犅１８８６．３—２０２１
+犃
+F G
+HIJK
+： ， 。
+LM NHIJKOPQRS4T-UVWXYZ[X \]^_‘abcR%&7defg h
+， 。 ， 。
+>^ _ijklOmn opqrst_uvQwxy z{|_uv}~
+犃．１
+(cid:127)(cid:128)(cid:129)(cid:130)
+， ＧＢ／Ｔ６６８２ 。
+!""#¡i(cid:143).mC(cid:148)¢£...
+
+
+
+This information is drawn from 5 document section(s). For full context, please refer to the evidence citations above.","p0000_b0000,p0001_b0000,p0002_b0000,p0003_b0000,p0004_b0000",3,True,
+q5,What are the conclusions?,"Based on the retrieved evidence, here's what I found regarding 'What are the conclusions?':
+
+
+[1] ! "" # $ % & ’ ’ ( ) *
+犌犅１８８６．３—２０２１
+!""#$%&’(
+!"")*+ ,-./
+２０２１０２２２ ２０２１０８２２
+01 23
+!""#$%&’’(+,-./01
+0 1
+’ ( 2 3 4 5 6 7 8 9
+书书书
+
+[2] 犌犅１８８６．３—２０２１
+! ""
+ＧＢ１８８６．３—２０１６《 》。
+!""#$% &’()*+""# &’,-. /012
+ＧＢ１８８６．３—２０１６ ， ：
+!""#3 45 6789:;
+——— ；
+<=>?@
+——— ；
+A->BC/012DE
+——— “ ”；
+FGHIJK""<=L MNOP
+——— “ ” “ ”；
+F QRSJ <=L QRTJ
+——— “ （ Ｆ ）” “ （Ｆ）”；
+...
+
+[3] 犌犅１８８６．３—２０２１
+#$%&’()*
+#$+,- ./01
+１
+23
+（ 、 ） （ ）
+!""#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’
+。
+,-./012
+２
+45678945:;
+２．１
+456
+：ＣａＨＰＯ ·２Ｈ Ｏ
+aC/012 ４ ２
+：ＣａＨＰＯ
+BC/012 ４
+２．２
+8945:;
+：１７２．０９（ ２０１８ ）
+aC/012 s...
+
+[4] 犌犅１８８６．３—２０２１
+２（ ）
+B (cid:157)
+K ""
+(cid:129) (cid:130) Z[\]
+aC/012 BC/012
+，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４
+QRTJ (cid:155)(cid:156) (cid:147)
+（ ），狑／％ ≤ ０．０５ Ａ Ａ．５
+(cid:158)0(cid:159)(cid:160)V MNOP (cid:15...
+
+[5] 犌犅１８８６．３—２０２１
+犃
+F G
+HIJK
+： ， 。
+LM NHIJKOPQRS4T-UVWXYZ[X \]^_‘abcR%&7defg h
+， 。 ， 。
+>^ _ijklOmn opqrst_uvQwxy z{|_uv}~
+犃．１
+(cid:127)(cid:128)(cid:129)(cid:130)
+， ＧＢ／Ｔ６６８２ 。
+!""#¡i(cid:143).mC(cid:148)¢£...
+
+
+
+This information is drawn from 5 document section(s). For full context, please refer to the evidence citations above.","p0000_b0000,p0001_b0000,p0002_b0000,p0003_b0000,p0004_b0000",1,True,

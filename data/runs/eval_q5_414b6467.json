@@ -1,0 +1,284 @@
+{
+  "query": {
+    "query_id": "eval_q5_414b6467",
+    "question": "What are the conclusions?",
+    "doc_filter": null,
+    "user_meta": {
+      "eval_qid": "q5"
+    }
+  },
+  "retrieval": {
+    "query_id": "eval_q5_414b6467",
+    "hits": [
+      {
+        "unit_id": "p0000_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 0,
+        "block_id": "p0000_b0000",
+        "text": "! \" # $ % & ’ ’ ( ) *\n犌犅１８８６．３—２０２１\n!\"#$%&’(\n!\")*+ ,-./\n２０２１０２２２ ２０２１０８２２\n01 23\n!\"#$%&’’(+,-./01\n0 1\n’ ( 2 3 4 5 6 7 8 9\n书书书",
+        "score": 0.0,
+        "bbox": null,
+        "source": "bm25",
+        "metadata": {
+          "block_type": "paragraph"
+        }
+      },
+      {
+        "unit_id": "p0001_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 1,
+        "block_id": "p0001_b0000",
+        "text": "犌犅１８８６．３—２０２１\n! \"\nＧＢ１８８６．３—２０１６《 》。\n!\"#$% &’()*+\"# &’,-. /012\nＧＢ１８８６．３—２０１６ ， ：\n!\"#3 45 6789:;\n——— ；\n<=>?@\n——— ；\nA->BC/012DE\n——— “ ”；\nFGHIJK\"<=L MNOP\n——— “ ” “ ”；\nF QRSJ <=L QRTJ\n——— “ （ Ｆ ）” “ （Ｆ）”；\nF U9V M P <=L U\n——— （Ｐｂ） ；\n<=>W XK\"Y\n——— ＧＢ／Ｔ５００９．１８；\nFUIJZ[\\]<=L\n——— ＧＢ５００９．７５—２０１４ ＧＢ５００９．１２—２０１７ 、 、\nFWXZ[\\]<=L ^_]‘ ^a] ^b] ^\n；\nc]\n——— ＧＢ５００９．７６ ＧＢ５００９．１１；\nFdXZ[\\]<=L ‘\n——— ＧＢ５００９．７４。\nFefgXZ[\\]<=L\nⅠ\n书书书",
+        "score": 0.0,
+        "bbox": null,
+        "source": "bm25",
+        "metadata": {
+          "block_type": "paragraph"
+        }
+      },
+      {
+        "unit_id": "p0002_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 2,
+        "block_id": "p0002_b0000",
+        "text": "犌犅１８８６．３—２０２１\n#$%&’()*\n#$+,- ./01\n１\n23\n（ 、 ） （ ）\n!\"#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’\n。\n,-./012\n２\n45678945:;\n２．１\n456\n：ＣａＨＰＯ ·２Ｈ Ｏ\naC/012 ４ ２\n：ＣａＨＰＯ\nBC/012 ４\n２．２\n8945:;\n：１７２．０９（ ２０１８ ）\naC/012 s t*u4vowHJ\n：１３６．０６（ ２０１８ ）\nBC/012 s t*u4vowHJ\n３\n<=>?\n３．１\n@A>?\n１ 。\nxy7z{|}~ X(cid:127)(cid:128)\n１\nB @A>?\n(cid:129) (cid:130) 7 z Z[\\]\n５０ｍＬ ，\n(cid:131)(cid:132) (cid:133)(cid:131) (cid:142)hJ(cid:143)(cid:144)(cid:145)j R(cid:146)(cid:147) (cid:148)(cid:149)\n、\n(cid:134)(cid:135) (cid:136)(cid:137) (cid:136)(cid:137)(cid:138)(cid:139)‘(cid:140)(cid:141) (cid:150)(cid:151);(cid:152)(cid:153)(cid:131)(cid:132)m(cid:134)(cid:135)\n３．２\nCDE)\n２ 。\n(cid:154)9K\"{|}~ X(cid:127)(cid:128)\n２\nB CDE)\nK \"\n(cid:129) (cid:130) Z[\\]\naC/012 BC/012\n（ ＣａＨＰＯ ·２ＨＯ ），狑／％ ９８．０～１０５．０ —\nM ４ ２ P Ａ Ａ．３\n/012IJ （ ＣａＨＰＯ ），狑／％ — ９８．０～１０５．０ (cid:155)(cid:156) (cid:147)\nM ４P\n１",
+        "score": 0.0,
+        "bbox": null,
+        "source": "bm25",
+        "metadata": {
+          "block_type": "paragraph"
+        }
+      },
+      {
+        "unit_id": "p0003_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 3,
+        "block_id": "p0003_b0000",
+        "text": "犌犅１８８６．３—２０２１\n２（ ）\nB (cid:157)\nK \"\n(cid:129) (cid:130) Z[\\]\naC/012 BC/012\n，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４\nQRTJ (cid:155)(cid:156) (cid:147)\n（ ），狑／％ ≤ ０．０５ Ａ Ａ．５\n(cid:158)0(cid:159)(cid:160)V MNOP (cid:155)(cid:156) (cid:147)\n（Ｆ）（ ）／（ｍｇ／ｋｇ） ≤ ５０．０ ＧＢ／Ｔ５００９．１８\nU MNOP\n（Ｐｂ）（ ）／（ｍｇ／ｋｇ） ≤ ２．０ Ａ Ａ．６\nW MNOP (cid:155)(cid:156) (cid:147)\n（Ａｓ）（ ）／（ｍｇ／ｋｇ） ≤ ２．０ Ａ Ａ．７\nd MNOP (cid:155)(cid:156) (cid:147)\n（ Ｐｂ ）（ ）／（ｍｇ／ｋｇ） ≤ １０ Ａ Ａ．８\nefg M P MNOP (cid:155)(cid:156) (cid:147)\n２",
+        "score": 0.0,
+        "bbox": null,
+        "source": "bm25",
+        "metadata": {
+          "block_type": "paragraph"
+        }
+      },
+      {
+        "unit_id": "p0004_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 4,
+        "block_id": "p0004_b0000",
+        "text": "犌犅１８８６．３—２０２１\n犃\nF G\nHIJK\n： ， 。\nLM NHIJKOPQRS4T-UVWXYZ[X \\]^_‘abcR%&7defg h\n， 。 ， 。\n>^ _ijklOmn opqrst_uvQwxy z{|_uv}~\n犃．１\n(cid:127)(cid:128)(cid:129)(cid:130)\n， ＧＢ／Ｔ６６８２ 。\n!\"#¡i(cid:143).mC(cid:148)¢£⁄¥ƒ§7z¤ 'K“«‹(cid:143).m (cid:147)(cid:127)(cid:128)Xb›C (cid:143)\n、 ， ， ＧＢ／Ｔ６０１、ＧＢ／Ｔ６０２、\n[(cid:147)¡iGHfi(cid:128)i\"#(cid:160)fl (cid:176).–(cid:176)’ (cid:148)¢£⁄¥ƒ§7z¤ 's\nＧＢ／Ｔ６０３ 。 ， 。\n†(cid:127)(cid:128)(cid:176)‡ ¡i(cid:160)fl(cid:148)·⁄¥i(cid:181)¶(cid:160).•(cid:176)¤ 'KC(cid:160)fl\n犃．２\n(cid:131)(cid:132)TI\n犃．２．１\nT-7(cid:133)(cid:134)\n犃．２．１．１ ：１＋３。\n(cid:158)0(cid:160)fl\n犃．２．１．２ ：１＋１。\n‚C(cid:160)fl\n犃．２．１．３ ：１＋１。\n„0(cid:160)fl\n犃．２．１．４ ：３５ｇ／Ｌ。 ３．５ｇ ［（ＮＨ ））ＣＯ ·Ｈ Ｏ］ ， １００ｍＬ。\n”0»(cid:160)fl …(cid:142) ”0» ４ ２ ２ ４ ２ (cid:160)jC ‰(cid:190)¿(cid:192)\n犃．２．１．５ ：６０ｇ／Ｌ。 ６ｇ ［（ＮＨ ）ＭｏＯ ·４Ｈ Ｏ］ ５０ｍＬ ，\n`0»(cid:160)fl …(cid:142) `0» ４ ６ ７ ２４ ２ (cid:160)j C(cid:147) ´ˆ˜´\n１００ｍＬ。 。\n¯˘-˙„0(cid:160)fl(cid:192)¨ (cid:201)˚j¸(cid:131)(cid:143).(cid:204)(cid:147)\n犃．２．２\n(cid:131)(cid:132)JK\n犃．２．２．１\n1(cid:135)5(cid:131)(cid:132)\n０．１ｇ ， ５ｍＬ 、５ｍＬ ， 。 ２．５ｍＬ ，\n…(cid:142)¨ (cid:143)(cid:144) -˙ C (cid:158)0(cid:160)fl ˝(cid:143)(cid:144)(cid:160)˛ ´ˇ—´(cid:209)- ‚C(cid:160)fl\n５ｍＬ ， 。\n(cid:150)(cid:210)-˙ ”0»(cid:160)fl rq(cid:133)(cid:131)(cid:211)(cid:212)\n犃．２．２．２\n./(cid:136)(cid:135)5R(cid:131)(cid:132)\n０．１ｇ ， １ｍＬ， ４０℃～５０℃， １０ｍＬ\n…(cid:142)¨ (cid:143)(cid:144) (cid:209)-„0(cid:160)fl(cid:192)(cid:143)(cid:144)(cid:160)˛(cid:210)(cid:213)(cid:214)J -(cid:215)(cid:192) -˙ `\n， 。\n0»(cid:160)fl q(cid:216)(cid:217)(cid:131)(cid:211)(cid:212)\n犃．３\n./01(cid:137);R(cid:138)(cid:130)\n犃．３．１\nJK(cid:139)>\n， ， ，\n(cid:148)(cid:143)[(cid:160)fl(cid:147) b(cid:218)(cid:219)(cid:220)(cid:221)L(cid:222)(cid:223). (cid:148)0(cid:224)Æ(cid:226);(cid:209)-(cid:218)a(cid:220)c(cid:218)0aª\"#(cid:209)(cid:128)(cid:160)fl(cid:228)(cid:229)(cid:230)\nｐＨ ｐＨ ， 。\ni1k9ª(cid:160)fl(cid:231)(cid:143)[(cid:160)flX jŁOØŒºK(cid:236).(cid:237)(cid:131) ?@(cid:238) (cid:239)(cid:157)(cid:209)(cid:128)(cid:240)æX2\n犃．３．２\nT-7(cid:133)(cid:134)\n犃．３．２．１ 。\nb(cid:218)(cid:219)(cid:220)\n犃．３．２．２ ：１＋１。\n(cid:158)0(cid:160)fl\n犃．３．２．３ ：４５０ｇ／Ｌ。\n1k9ª(cid:160)fl\n３",
+        "score": 0.0,
+        "bbox": null,
+        "source": "bm25",
+        "metadata": {
+          "block_type": "paragraph"
+        }
+      },
+      {
+        "unit_id": "p0005_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 5,
+        "block_id": "p0005_b0000",
+        "text": "犌犅１８８６．３—２０２１\n犃．３．２．４ ：犮（ＥＤＴＡ）＝０．０５ｍｏｌ／Ｌ。\n(cid:218)a(cid:220)c(cid:218)0aª\"#(cid:209)(cid:128)(cid:160)fl\n犃．３．２．５ 。\nŁOØŒºK(cid:236).\n犃．３．３\n(cid:140)(cid:141)7(cid:142)(cid:143)\n。\n(cid:242)(cid:224)ˆ˜(cid:243)\n犃．３．４\n4(cid:144)(cid:145)(cid:146)\n犃．３．４．１\nTI(cid:147)(cid:148)R(cid:149)(cid:143)\n２．５ｇ ， ０．０００２ｇ， １００ｍＬ ， ２０ｍＬ ，\n…(cid:142) (cid:143)(cid:144) (cid:244)ı(cid:192) (cid:145)j R(cid:146)(cid:147) - (cid:158)0(cid:160)fl(cid:160)˛ (cid:246))(cid:247)ł(cid:192)\n２５０ｍＬ ， ， 。 。\nøJ(cid:204)(cid:147) -C(cid:192)œß —(cid:252) (cid:253)(cid:160)flL(cid:143)[(cid:160)fl\n犃．３．４．２\n(cid:138)(cid:130)\n２５ｍＬ ２５０ｍＬ ， １００ｍＬ 、０．５ｍＬ ， ０．３ｇ\n#ıł(cid:142) (cid:143)[(cid:160)flj (cid:254)(cid:255)(cid:204)(cid:147) - C b(cid:218)(cid:219)(cid:220) -˙ ŁOØ\n， ，\nŒºK(cid:236). !j(cid:242)(cid:224)ˆ˜(cid:243)\"ˆ˜'(cid:252) i(cid:209)(cid:128)#M$%&ß(cid:209)-(cid:218)a(cid:220)c(cid:218)0aª\"#(cid:209)(cid:128)(cid:160)fl¨\n２３ｍＬ， ， ， ０．５ｍＬ。\n(cid:209)-1k9ª(cid:160)fl’((cid:131)8(cid:192))º(cid:131) *(cid:210)8L+(cid:131) (cid:213)(cid:214)J (cid:239)(cid:157)i(cid:218)a(cid:220)c(cid:218)0a\n， ６０ｓ 。 。\nª\"#(cid:209)(cid:128)(cid:160)fl(cid:209)(cid:128)(cid:192)(cid:160)fl8Lº(cid:131) ,- (cid:159)8 .¤/0(cid:133)(cid:143)[\n犃．３．５\n(cid:150)(cid:151)(cid:152)(cid:153)\n（ ＣａＨＰＯ ·２Ｈ Ｏ ＣａＨＰＯ ） 狑 （Ａ．１） 。\n/012 M ４ ２ P‘M ４ P XHJ“1 １ s2 P3\n［（犞－犞）／１０００］×犮×犕×２５０\n狑 ＝ ０ ×１００％ ……………………（Ａ．１）\n１ 犿 ×２５\n１\n：\n2(cid:147)\n犞 ——— ， （ｍＬ）；\n(cid:209)(cid:128)(cid:143)(cid:144)(cid:160)fl45X(cid:218)a(cid:220)c(cid:218)0aª\"#(cid:209)(cid:128)(cid:160)flX(cid:137)6 78L9:\n犞 ——— ， （ｍＬ）；\n０ (cid:209)(cid:128)0(cid:133)(cid:143)[(cid:160)fl45X(cid:218)a(cid:220)c(cid:218)0aª\"#(cid:209)(cid:128)(cid:160)flX(cid:137)6 78L9:\n１０００——— ；\n;3<w\n犮 ——— ， （ｍｏｌ／Ｌ）；\n(cid:218)a(cid:220)c(cid:218)0aª\"#(cid:209)(cid:128)(cid:160)fl=ßX#ı1Y 78L>?@:\n犕 ——— （ＣａＨＰＯ ·２Ｈ Ｏ）、 （ＣａＨＰＯ ） ，\naC/012 ４ ２ /012 ４ X>?HJ 78LA@>?\n（ｇ／ｍｏｌ）［犕（ＣａＨＰＯ ·２Ｈ Ｏ）＝１７２．０９、犕（ＣａＨＰＯ ）＝１３６．０６］；\n４ ２ ４\n２５０ ——— ， （ｍＬ）；\nøJ(cid:204)Xø6 78L9:\n犿 ——— ， （ｇ）；\n１ (cid:143)(cid:144)XHJ 78LA\n２５ ——— ， （ｍＬ）。\nł(cid:142)(cid:143)[(cid:160)flX(cid:137)6 78L9:\n。\n(cid:143)[BCMDEfi(cid:128)BCX3FD'YL# (cid:148)eG(cid:224)Æ(cid:226);HIXJKLMfi(cid:128)BCNvOY\n０．５％。\n(cid:159)Pj\n犃．４\n(cid:154)(cid:155)(cid:156);R(cid:138)(cid:130)\n犃．４．１\n(cid:140)(cid:141)7(cid:142)(cid:143)\n犃．４．１．１ ： ８００℃～８２５℃。\nQRS TR?@L\n犃．４．１．２ ：３０ｍＬ。\nUVW\n犃．４．２\n4(cid:144)(cid:145)(cid:146)\n３ｇ ， ０．０００２ｇ， ８００℃～８２５℃ ， ８００℃～\n…(cid:142) (cid:143)(cid:144) (cid:244)ı(cid:192) (cid:145)jX(cid:148) QR(cid:192)HJY(cid:128)XUVW(cid:147) j\n４",
+        "score": 0.0,
+        "bbox": null,
+        "source": "bm25",
+        "metadata": {
+          "block_type": "paragraph"
+        }
+      },
+      {
+        "unit_id": "p0006_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 6,
+        "block_id": "p0006_b0000",
+        "text": "犌犅１８８６．３—２０２１\n８２５℃ 。\nQR(cid:192)HJY(cid:128)\n犃．４．３\n(cid:150)(cid:151)(cid:152)(cid:153)\n狑 （Ａ．２） 。\nQRTJXHJ“1 ２ s2 P3\n犿 －犿\n狑 ＝ ２ ３×１００％ …………………………（Ａ．２）\n２ 犿\n４\n：\n2(cid:147)\n犿——— ， （ｇ）；\n２ QRZVWm(cid:143)(cid:144)XHJ 78LA\n犿——— ， （ｇ）；\n３ QR(cid:210)VWm(cid:143)(cid:144)XHJ 78LA\n犿——— ， （ｇ）。\n４ (cid:143)(cid:144)XHJ 78LA\n。\n(cid:143)[BCMDEfi(cid:128)BCX3FD'YL# (cid:148)eG(cid:224)Æ(cid:226);HIXJKLMfi(cid:128)BCNvOY\n０．２％。\n(cid:159)Pj\n犃．５\n(cid:157)/(cid:158)(cid:147)(cid:159)R(cid:138)(cid:130)\n犃．５．１\nT-7(cid:133)(cid:134)\n：１＋１。\n(cid:158)0(cid:160)fl\n犃．５．２\n(cid:140)(cid:141)7(cid:142)(cid:143)\n犃．５．２．１ ： ５μｍ～１５μｍ。\n[\\]VW ^_‘a\n犃．５．２．２ ： １０５℃±２℃。\nb(cid:215)YRNcd TR?@L\n犃．５．３\n4(cid:144)(cid:145)(cid:146)\n１０ｇ， ０．０１ｇ， ２５０ｍＬ ， ４０ｍＬ ６０ｍＬ ， ，\n…(cid:142)(cid:143)(cid:144) (cid:244)ı(cid:192) (cid:145)j R(cid:146)(cid:147) -˙ (cid:158)0(cid:160)flm C -(cid:215)(cid:160)˛\n１００ｍＬ， １０５℃±２℃ ， ， １０５℃±\n-C(cid:192) i ;XHJY(cid:128)X[\\]VW(cid:214)^ iCef(cid:192)Bghw j\n２℃ 。\nXb(cid:215)YRNcd(cid:147)Nc(cid:192)HJY(cid:128)\n犃．５．４\n(cid:150)(cid:151)(cid:152)(cid:153)\n狑 （Ａ．３） 。\n(cid:158)0(cid:159)(cid:160)VXHJ“1 ３ s2 P3\n犿 －犿\n狑 ＝ ５ ６ ×１００％ …………………………（Ａ．３）\n３ 犿 ×（１－狑）\n７ ２\n：\n2(cid:147)\n犿——— ， （ｇ）；\n５ (cid:158)0(cid:159)(cid:160)Vm[\\]VWXHJ 78LA\n犿——— ， （ｇ）；\n６ [\\]VWXHJ 78LA\n犿——— ， （ｇ）；\n７ (cid:143)(cid:144)XHJ 78LA\n狑——— Ａ．４ ，％。\n２ s fi(cid:128)¡IQRSJXHJ“1\n。\n(cid:143)[BCMDEfi(cid:128)BCX3FD'YL# (cid:148)eG(cid:224)Æ(cid:226);HIXJKLMfi(cid:128)BCNvOY\n０．０１％。\n(cid:159)Pj\n犃．６ （犘犫）\n(cid:160) R(cid:138)(cid:130)\nＡ．４ ， ＧＢ５００９．７５—２０１４ ＧＢ５００９．１２—２０１７ 、\n…(cid:142)hJi QR(cid:210)X(cid:143)(cid:144) s ^_]‘ ^a] ^b\n、 ， ＧＢ／Ｔ６６８２ 。\n] ^c](cid:127)(cid:128)X\\]jEfi(cid:128) (cid:143)[(cid:147)¡iCL (cid:127)(cid:128)Xa›C\n５",
+        "score": 0.0,
+        "bbox": null,
+        "source": "bm25",
+        "metadata": {
+          "block_type": "paragraph"
+        }
+      },
+      {
+        "unit_id": "p0007_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 7,
+        "block_id": "p0007_b0000",
+        "text": "犌犅１８８６．３—２０２１\n犃．７ （犃狊）\n¡ R(cid:138)(cid:130)\nＡ．４ ， （１＋１） ２ｍＬ， ＧＢ５００９．７６\n…(cid:142)hJi QR(cid:210)X(cid:143)(cid:144) (cid:209)-(cid:158)0(cid:160)fl (cid:192)(cid:143)(cid:144)(cid:160)˛(cid:213)(cid:214)J (cid:150)(cid:210)s\nＧＢ５００９．１１ ， （ ） （ ），\n‘ (cid:127)(cid:128)X\\]jEfi(cid:128) (cid:143)[kl(cid:147)i(cid:158)0 ‘(cid:158)0(cid:160)fl $%m0 ‘m0(cid:160)fl (cid:143)[(cid:147)\nＧＢ／Ｔ６６８２ 。\n¡iCL (cid:127)(cid:128)Xa›C\n犃．８ （ 犘犫 ）\n{¢£ ⁄ (cid:152) R(cid:138)(cid:130)\nＡ．４ ２ｇ±０．０１ｇ， ５ｍＬ （１＋１）、２０ｍＬ ， ，\n…(cid:142)i QR(cid:210)X(cid:143)(cid:144) - (cid:158)0(cid:160)fl C -(cid:215)(cid:192)(cid:160)˛ no(cid:210)(cid:209)\n（１＋５） ， （１＋１） ， ＧＢ５００９．７４\n-‚C(cid:160)fl (cid:192)(cid:133)(cid:131)(cid:211)(cid:212)pq (cid:213)-˙rJ(cid:158)0(cid:160)fl (cid:192)(cid:211)(cid:212)4S s (cid:127)(cid:128)X\\\n， ５ｍＬｐＨ３．５ ， 。 ＧＢ／Ｔ６６８２ 。\n] -˙ X(cid:218)0(cid:158)¯sfl (cid:150)(cid:210)jEfi(cid:128) (cid:143)[(cid:147)¡iCL (cid:127)(cid:128)Xa›C\n６",
+        "score": 0.0,
+        "bbox": null,
+        "source": "bm25",
+        "metadata": {
+          "block_type": "paragraph"
+        }
+      }
+    ],
+    "elapsed_ms": 0
+  },
+  "evidence": {
+    "query_id": "eval_q5_414b6467",
+    "evidence": [
+      {
+        "rank": 0,
+        "unit_id": "p0000_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 0,
+        "block_id": "p0000_b0000",
+        "snippet": "! \" # $ % & ’ ’ ( ) *\n犌犅１８８６．３—２０２１\n!\"#$%&’(\n!\")*+ ,-./\n２０２１０２２２ ２０２１０８２２\n01 23\n!\"#$%&’’(+,-./01\n0 1\n’ ( 2 3 4 5 6 7 8 9\n书书书",
+        "bbox": null,
+        "score": 0.0,
+        "rationale": "BM25 score: 0.0000"
+      },
+      {
+        "rank": 1,
+        "unit_id": "p0001_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 1,
+        "block_id": "p0001_b0000",
+        "snippet": "犌犅１８８６．３—２０２１\n! \"\nＧＢ１８８６．３—２０１６《 》。\n!\"#$% &’()*+\"# &’,-. /012\nＧＢ１８８６．３—２０１６ ， ：\n!\"#3 45 6789:;\n——— ；\n<=>?@\n——— ；\nA->BC/012DE\n——— “ ”；\nFGHIJK\"<=L MNOP\n——— “ ” “ ”；\nF QRSJ <=L QRTJ\n——— “ （ Ｆ ）” “ （Ｆ）”；\nF U9V M P <=L U\n——— （Ｐｂ） ；\n<=>W XK\"Y\n——— ＧＢ／Ｔ５００９．１８；\nFUIJZ[\\]<=L\n——— ＧＢ５００９．７５—２０１４ ＧＢ５００９．１２—２０１７ 、 、\nFWXZ[\\]<=L ^_]‘ ^a] ^b] ^\n；\nc]\n——— ＧＢ５００９．７６ ＧＢ５００９．１１；\nFdXZ[\\]<=L ‘\n——— ＧＢ５００９．７４。\nFefgXZ[\\]<=L\nⅠ\n书书书",
+        "bbox": null,
+        "score": 0.0,
+        "rationale": "BM25 score: 0.0000"
+      },
+      {
+        "rank": 2,
+        "unit_id": "p0002_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 2,
+        "block_id": "p0002_b0000",
+        "snippet": "犌犅１８８６．３—２０２１\n#$%&’()*\n#$+,- ./01\n１\n23\n（ 、 ） （ ）\n!\"#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’\n。\n,-./012\n２\n45678945:;\n２．１\n456\n：ＣａＨＰＯ ·２Ｈ Ｏ\naC/012 ４ ２\n：ＣａＨＰＯ\nBC/012 ４\n２．２\n8945:;\n：１７２．０９（ ２０１８ ）\naC/012 s t*u4vowHJ\n：１３６．０６（ ２０１８ ）\nBC/012 s t*u4vowHJ\n３\n<=>?\n３．１\n@A>?\n１ 。\nxy7z{|}~ X(cid:127)(cid:128)\n１\nB @A>?\n(cid:129) (cid:130) 7 z Z[\\]\n５０ｍＬ ，\n(cid:131)(cid:132) (cid:133)(cid:131) (cid:142)hJ(cid:143)(cid:144)(cid:145)j R(cid:146)(cid:147) (cid:148)(cid:149)\n、\n(cid:134)(cid:135) (cid:136)(cid:137) (ci...",
+        "bbox": null,
+        "score": 0.0,
+        "rationale": "BM25 score: 0.0000"
+      },
+      {
+        "rank": 3,
+        "unit_id": "p0003_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 3,
+        "block_id": "p0003_b0000",
+        "snippet": "犌犅１８８６．３—２０２１\n２（ ）\nB (cid:157)\nK \"\n(cid:129) (cid:130) Z[\\]\naC/012 BC/012\n，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４\nQRTJ (cid:155)(cid:156) (cid:147)\n（ ），狑／％ ≤ ０．０５ Ａ Ａ．５\n(cid:158)0(cid:159)(cid:160)V MNOP (cid:155)(cid:156) (cid:147)\n（Ｆ）（ ）／（ｍｇ／ｋｇ） ≤ ５０．０ ＧＢ／Ｔ５００９．１８\nU MNOP\n（Ｐｂ）（ ）／（ｍｇ／ｋｇ） ≤ ２．０ Ａ Ａ．６\nW MNOP (cid:155)(cid:156) (cid:147)\n（Ａｓ）（ ）／（ｍｇ／ｋｇ） ≤ ２．０ Ａ Ａ．７\nd MNOP (cid:155)(cid:156) (cid:147)\n（ Ｐｂ ）（ ）／（ｍｇ／ｋｇ） ≤ １０ Ａ Ａ．８\nefg M P MNOP (cid:155)(cid:156) (cid:147)\n２",
+        "bbox": null,
+        "score": 0.0,
+        "rationale": "BM25 score: 0.0000"
+      },
+      {
+        "rank": 4,
+        "unit_id": "p0004_b0000",
+        "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+        "page_id": 4,
+        "block_id": "p0004_b0000",
+        "snippet": "犌犅１８８６．３—２０２１\n犃\nF G\nHIJK\n： ， 。\nLM NHIJKOPQRS4T-UVWXYZ[X \\]^_‘abcR%&7defg h\n， 。 ， 。\n>^ _ijklOmn opqrst_uvQwxy z{|_uv}~\n犃．１\n(cid:127)(cid:128)(cid:129)(cid:130)\n， ＧＢ／Ｔ６６８２ 。\n!\"#¡i(cid:143).mC(cid:148)¢£⁄¥ƒ§7z¤ 'K“«‹(cid:143).m (cid:147)(cid:127)(cid:128)Xb›C (cid:143)\n、 ， ， ＧＢ／Ｔ６０１、ＧＢ／Ｔ６０２、\n[(cid:147)¡iGHfi(cid:128)i\"#(cid:160)fl (cid:176).–(cid:176)’ (cid:148)¢£⁄¥ƒ§7z¤ 's\nＧＢ／Ｔ６０３ 。 ， 。\n†(cid:127)(cid:128)(cid:176)‡ ¡i(cid:160)fl(cid:148)·⁄¥i(cid:181)¶(cid:160).•(cid:176)¤ 'KC(cid:160)fl\n犃．２\n(cid:...",
+        "bbox": null,
+        "score": 0.0,
+        "rationale": "BM25 score: 0.0000"
+      }
+    ],
+    "elapsed_ms": 0
+  },
+  "generation": {
+    "query_id": "eval_q5_414b6467",
+    "output": {
+      "answer": "Based on the retrieved evidence, here's what I found regarding 'What are the conclusions?':\n\n\n[1] ! \" # $ % & ’ ’ ( ) *\n犌犅１８８６．３—２０２１\n!\"#$%&’(\n!\")*+ ,-./\n２０２１０２２２ ２０２１０８２２\n01 23\n!\"#$%&’’(+,-./01\n0 1\n’ ( 2 3 4 5 6 7 8 9\n书书书\n\n[2] 犌犅１８８６．３—２０２１\n! \"\nＧＢ１８８６．３—２０１６《 》。\n!\"#$% &’()*+\"# &’,-. /012\nＧＢ１８８６．３—２０１６ ， ：\n!\"#3 45 6789:;\n——— ；\n<=>?@\n——— ；\nA->BC/012DE\n——— “ ”；\nFGHIJK\"<=L MNOP\n——— “ ” “ ”；\nF QRSJ <=L QRTJ\n——— “ （ Ｆ ）” “ （Ｆ）”；\n...\n\n[3] 犌犅１８８６．３—２０２１\n#$%&’()*\n#$+,- ./01\n１\n23\n（ 、 ） （ ）\n!\"#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’\n。\n,-./012\n２\n45678945:;\n２．１\n456\n：ＣａＨＰＯ ·２Ｈ Ｏ\naC/012 ４ ２\n：ＣａＨＰＯ\nBC/012 ４\n２．２\n8945:;\n：１７２．０９（ ２０１８ ）\naC/012 s...\n\n[4] 犌犅１８８６．３—２０２１\n２（ ）\nB (cid:157)\nK \"\n(cid:129) (cid:130) Z[\\]\naC/012 BC/012\n，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４\nQRTJ (cid:155)(cid:156) (cid:147)\n（ ），狑／％ ≤ ０．０５ Ａ Ａ．５\n(cid:158)0(cid:159)(cid:160)V MNOP (cid:15...\n\n[5] 犌犅１８８６．３—２０２１\n犃\nF G\nHIJK\n： ， 。\nLM NHIJKOPQRS4T-UVWXYZ[X \\]^_‘abcR%&7defg h\n， 。 ， 。\n>^ _ijklOmn opqrst_uvQwxy z{|_uv}~\n犃．１\n(cid:127)(cid:128)(cid:129)(cid:130)\n， ＧＢ／Ｔ６６８２ 。\n!\"#¡i(cid:143).mC(cid:148)¢£...\n\n\n\nThis information is drawn from 5 document section(s). For full context, please refer to the evidence citations above.",
+      "cited_units": [
+        "p0000_b0000",
+        "p0001_b0000",
+        "p0002_b0000",
+        "p0003_b0000",
+        "p0004_b0000"
+      ],
+      "warnings": []
+    },
+    "prompt": {
+      "system_prompt": "You are a helpful assistant that answers questions based on provided evidence. Always cite your sources using [1], [2], etc. If the evidence doesn't contain the answer, say so clearly.",
+      "user_prompt": "Question: What are the conclusions?\n\nBased on the following evidence, provide a comprehensive answer:\n\n[1] (Doc: GB 1886.3-2021_20260106_124838_cca7c76a, Page: 0)\n! \" # $ % & ’ ’ ( ) *\n犌犅１８８６．３—２０２１\n!\"#$%&’(\n!\")*+ ,-./\n２０２１０２２２ ２０２１０８２２\n01 23\n!\"#$%&’’(+,-./01\n0 1\n’ ( 2 3 4 5 6 7 8 9\n书书书\n\n[2] (Doc: GB 1886.3-2021_20260106_124838_cca7c76a, Page: 1)\n犌犅１８８６．３—２０２１\n! \"\nＧＢ１８８６．３—２０１６《 》。\n!\"#$% &’()*+\"# &’,-. /012\nＧＢ１８８６．３—２０１６ ， ：\n!\"#3 45 6789:;\n——— ；\n<=>?@\n——— ；\nA->BC/012DE\n——— “ ”；\nFGHIJK\"<=L MNOP\n——— “ ” “ ”；\nF QRSJ <=L QRTJ\n——— “ （ Ｆ ）” “ （Ｆ）”；\nF U9V M P <=L U\n——— （Ｐｂ） ；\n<=>W XK\"Y\n——— ＧＢ／Ｔ５００９．１８；\nFUIJZ[\\]<=L\n——— ＧＢ５００９．７５—２０１４ ＧＢ５００９．１２—２０１７ 、 、\nFWXZ[\\]<=L ^_]‘ ^a] ^b] ^\n；\nc]\n——— ＧＢ５００９．７６ ＧＢ５００９．１１；\nFdXZ[\\]<=L ‘\n——— ＧＢ５００９．７４。\nFefgXZ[\\]<=L\nⅠ\n书书书\n\n[3] (Doc: GB 1886.3-2021_20260106_124838_cca7c76a, Page: 2)\n犌犅１８８６．３—２０２１\n#$%&’()*\n#$+,- ./01\n１\n23\n（ 、 ） （ ）\n!\"#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’\n。\n,-./012\n２\n45678945:;\n２．１\n456\n：ＣａＨＰＯ ·２Ｈ Ｏ\naC/012 ４ ２\n：ＣａＨＰＯ\nBC/012 ４\n２．２\n8945:;\n：１７２．０９（ ２０１８ ）\naC/012 s t*u4vowHJ\n：１３６．０６（ ２０１８ ）\nBC/012 s t*u4vowHJ\n３\n<=>?\n３．１\n@A>?\n１ 。\nxy7z{|}~ X(cid:127)(cid:128)\n１\nB @A>?\n(cid:129) (cid:130) 7 z Z[\\]\n５０ｍＬ ，\n(cid:131)(cid:132) (cid:133)(cid:131) (cid:142)hJ(cid:143)(cid:144)(cid:145)j R(cid:146)(cid:147) (cid:148)(cid:149)\n、\n(cid:134)(cid:135) (cid:136)(cid:137) (ci...\n\n[4] (Doc: GB 1886.3-2021_20260106_124838_cca7c76a, Page: 3)\n犌犅１８８６．３—２０２１\n２（ ）\nB (cid:157)\nK \"\n(cid:129) (cid:130) Z[\\]\naC/012 BC/012\n，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４\nQRTJ (cid:155)(cid:156) (cid:147)\n（ ），狑／％ ≤ ０．０５ Ａ Ａ．５\n(cid:158)0(cid:159)(cid:160)V MNOP (cid:155)(cid:156) (cid:147)\n（Ｆ）（ ）／（ｍｇ／ｋｇ） ≤ ５０．０ ＧＢ／Ｔ５００９．１８\nU MNOP\n（Ｐｂ）（ ）／（ｍｇ／ｋｇ） ≤ ２．０ Ａ Ａ．６\nW MNOP (cid:155)(cid:156) (cid:147)\n（Ａｓ）（ ）／（ｍｇ／ｋｇ） ≤ ２．０ Ａ Ａ．７\nd MNOP (cid:155)(cid:156) (cid:147)\n（ Ｐｂ ）（ ）／（ｍｇ／ｋｇ） ≤ １０ Ａ Ａ．８\nefg M P MNOP (cid:155)(cid:156) (cid:147)\n２\n\n[5] (Doc: GB 1886.3-2021_20260106_124838_cca7c76a, Page: 4)\n犌犅１８８６．３—２０２１\n犃\nF G\nHIJK\n： ， 。\nLM NHIJKOPQRS4T-UVWXYZ[X \\]^_‘abcR%&7defg h\n， 。 ， 。\n>^ _ijklOmn opqrst_uvQwxy z{|_uv}~\n犃．１\n(cid:127)(cid:128)(cid:129)(cid:130)\n， ＧＢ／Ｔ６６８２ 。\n!\"#¡i(cid:143).mC(cid:148)¢£⁄¥ƒ§7z¤ 'K“«‹(cid:143).m (cid:147)(cid:127)(cid:128)Xb›C (cid:143)\n、 ， ， ＧＢ／Ｔ６０１、ＧＢ／Ｔ６０２、\n[(cid:147)¡iGHfi(cid:128)i\"#(cid:160)fl (cid:176).–(cid:176)’ (cid:148)¢£⁄¥ƒ§7z¤ 's\nＧＢ／Ｔ６０３ 。 ， 。\n†(cid:127)(cid:128)(cid:176)‡ ¡i(cid:160)fl(cid:148)·⁄¥i(cid:181)¶(cid:160).•(cid:176)¤ 'KC(cid:160)fl\n犃．２\n(cid:...",
+      "context": "[1] (Doc: GB 1886.3-2021_20260106_124838_cca7c76a, Page: 0)\n! \" # $ % & ’ ’ ( ) *\n犌犅１８８６．３—２０２１\n!\"#$%&’(\n!\")*+ ,-./\n２０２１０２２２ ２０２１０８２２\n01 23\n!\"#$%&’’(+,-./01\n0 1\n’ ( 2 3 4 5 6 7 8 9\n书书书\n\n[2] (Doc: GB 1886.3-2021_20260106_124838_cca7c76a, Page: 1)\n犌犅１８８６．３—２０２１\n! \"\nＧＢ１８８６．３—２０１６《 》。\n!\"#$% &’()*+\"# &’,-. /012\nＧＢ１８８６．３—２０１６ ， ：\n!\"#3 45 6789:;\n——— ；\n<=>?@\n——— ；\nA->BC/012DE\n——— “ ”；\nFGHIJK\"<=L MNOP\n——— “ ” “ ”；\nF QRSJ <=L QRTJ\n——— “ （ Ｆ ）” “ （Ｆ）”；\nF U9V M P <=L U\n——— （Ｐｂ） ；\n<=>W XK\"Y\n——— ＧＢ／Ｔ５００９．１８；\nFUIJZ[\\]<=L\n——— ＧＢ５００９．７５—２０１４ ＧＢ５００９．１２—２０１７ 、 、\nFWXZ[\\]<=L ^_]‘ ^a] ^b] ^\n；\nc]\n——— ＧＢ５００９．７６ ＧＢ５００９．１１；\nFdXZ[\\]<=L ‘\n——— ＧＢ５００９．７４。\nFefgXZ[\\]<=L\nⅠ\n书书书\n\n[3] (Doc: GB 1886.3-2021_20260106_124838_cca7c76a, Page: 2)\n犌犅１８８６．３—２０２１\n#$%&’()*\n#$+,- ./01\n１\n23\n（ 、 ） （ ）\n!\"#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’\n。\n,-./012\n２\n45678945:;\n２．１\n456\n：ＣａＨＰＯ ·２Ｈ Ｏ\naC/012 ４ ２\n：ＣａＨＰＯ\nBC/012 ４\n２．２\n8945:;\n：１７２．０９（ ２０１８ ）\naC/012 s t*u4vowHJ\n：１３６．０６（ ２０１８ ）\nBC/012 s t*u4vowHJ\n３\n<=>?\n３．１\n@A>?\n１ 。\nxy7z{|}~ X(cid:127)(cid:128)\n１\nB @A>?\n(cid:129) (cid:130) 7 z Z[\\]\n５０ｍＬ ，\n(cid:131)(cid:132) (cid:133)(cid:131) (cid:142)hJ(cid:143)(cid:144)(cid:145)j R(cid:146)(cid:147) (cid:148)(cid:149)\n、\n(cid:134)(cid:135) (cid:136)(cid:137) (ci...\n\n[4] (Doc: GB 1886.3-2021_20260106_124838_cca7c76a, Page: 3)\n犌犅１８８６．３—２０２１\n２（ ）\nB (cid:157)\nK \"\n(cid:129) (cid:130) Z[\\]\naC/012 BC/012\n，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４\nQRTJ (cid:155)(cid:156) (cid:147)\n（ ），狑／％ ≤ ０．０５ Ａ Ａ．５\n(cid:158)0(cid:159)(cid:160)V MNOP (cid:155)(cid:156) (cid:147)\n（Ｆ）（ ）／（ｍｇ／ｋｇ） ≤ ５０．０ ＧＢ／Ｔ５００９．１８\nU MNOP\n（Ｐｂ）（ ）／（ｍｇ／ｋｇ） ≤ ２．０ Ａ Ａ．６\nW MNOP (cid:155)(cid:156) (cid:147)\n（Ａｓ）（ ）／（ｍｇ／ｋｇ） ≤ ２．０ Ａ Ａ．７\nd MNOP (cid:155)(cid:156) (cid:147)\n（ Ｐｂ ）（ ）／（ｍｇ／ｋｇ） ≤ １０ Ａ Ａ．８\nefg M P MNOP (cid:155)(cid:156) (cid:147)\n２\n\n[5] (Doc: GB 1886.3-2021_20260106_124838_cca7c76a, Page: 4)\n犌犅１８８６．３—２０２１\n犃\nF G\nHIJK\n： ， 。\nLM NHIJKOPQRS4T-UVWXYZ[X \\]^_‘abcR%&7defg h\n， 。 ， 。\n>^ _ijklOmn opqrst_uvQwxy z{|_uv}~\n犃．１\n(cid:127)(cid:128)(cid:129)(cid:130)\n， ＧＢ／Ｔ６６８２ 。\n!\"#¡i(cid:143).mC(cid:148)¢£⁄¥ƒ§7z¤ 'K“«‹(cid:143).m (cid:147)(cid:127)(cid:128)Xb›C (cid:143)\n、 ， ， ＧＢ／Ｔ６０１、ＧＢ／Ｔ６０２、\n[(cid:147)¡iGHfi(cid:128)i\"#(cid:160)fl (cid:176).–(cid:176)’ (cid:148)¢£⁄¥ƒ§7z¤ 's\nＧＢ／Ｔ６０３ 。 ， 。\n†(cid:127)(cid:128)(cid:176)‡ ¡i(cid:160)fl(cid:148)·⁄¥i(cid:181)¶(cid:160).•(cid:176)¤ 'KC(cid:160)fl\n犃．２\n(cid:...",
+      "citations": [
+        {
+          "rank": 0,
+          "unit_id": "p0000_b0000",
+          "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+          "page_id": 0,
+          "block_id": "p0000_b0000",
+          "snippet": "! \" # $ % & ’ ’ ( ) *\n犌犅１８８６．３—２０２１\n!\"#$%&’(\n!\")*+ ,-./\n２０２１０２２２ ２０２１０８２２\n01 23\n!\"#$%&’’(+,-./01\n0 1\n’ ( 2 3 4 5 6 7 8 9\n书书书",
+          "bbox": null,
+          "score": 0.0,
+          "rationale": "BM25 score: 0.0000"
+        },
+        {
+          "rank": 1,
+          "unit_id": "p0001_b0000",
+          "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+          "page_id": 1,
+          "block_id": "p0001_b0000",
+          "snippet": "犌犅１８８６．３—２０２１\n! \"\nＧＢ１８８６．３—２０１６《 》。\n!\"#$% &’()*+\"# &’,-. /012\nＧＢ１８８６．３—２０１６ ， ：\n!\"#3 45 6789:;\n——— ；\n<=>?@\n——— ；\nA->BC/012DE\n——— “ ”；\nFGHIJK\"<=L MNOP\n——— “ ” “ ”；\nF QRSJ <=L QRTJ\n——— “ （ Ｆ ）” “ （Ｆ）”；\nF U9V M P <=L U\n——— （Ｐｂ） ；\n<=>W XK\"Y\n——— ＧＢ／Ｔ５００９．１８；\nFUIJZ[\\]<=L\n——— ＧＢ５００９．７５—２０１４ ＧＢ５００９．１２—２０１７ 、 、\nFWXZ[\\]<=L ^_]‘ ^a] ^b] ^\n；\nc]\n——— ＧＢ５００９．７６ ＧＢ５００９．１１；\nFdXZ[\\]<=L ‘\n——— ＧＢ５００９．７４。\nFefgXZ[\\]<=L\nⅠ\n书书书",
+          "bbox": null,
+          "score": 0.0,
+          "rationale": "BM25 score: 0.0000"
+        },
+        {
+          "rank": 2,
+          "unit_id": "p0002_b0000",
+          "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+          "page_id": 2,
+          "block_id": "p0002_b0000",
+          "snippet": "犌犅１８８６．３—２０２１\n#$%&’()*\n#$+,- ./01\n１\n23\n（ 、 ） （ ）\n!\"#hijM1k92 ‘l02 k92 m&’,-./0 In]/0 LopqrX&’\n。\n,-./012\n２\n45678945:;\n２．１\n456\n：ＣａＨＰＯ ·２Ｈ Ｏ\naC/012 ４ ２\n：ＣａＨＰＯ\nBC/012 ４\n２．２\n8945:;\n：１７２．０９（ ２０１８ ）\naC/012 s t*u4vowHJ\n：１３６．０６（ ２０１８ ）\nBC/012 s t*u4vowHJ\n３\n<=>?\n３．１\n@A>?\n１ 。\nxy7z{|}~ X(cid:127)(cid:128)\n１\nB @A>?\n(cid:129) (cid:130) 7 z Z[\\]\n５０ｍＬ ，\n(cid:131)(cid:132) (cid:133)(cid:131) (cid:142)hJ(cid:143)(cid:144)(cid:145)j R(cid:146)(cid:147) (cid:148)(cid:149)\n、\n(cid:134)(cid:135) (cid:136)(cid:137) (ci...",
+          "bbox": null,
+          "score": 0.0,
+          "rationale": "BM25 score: 0.0000"
+        },
+        {
+          "rank": 3,
+          "unit_id": "p0003_b0000",
+          "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+          "page_id": 3,
+          "block_id": "p0003_b0000",
+          "snippet": "犌犅１８８６．３—２０２１\n２（ ）\nB (cid:157)\nK \"\n(cid:129) (cid:130) Z[\\]\naC/012 BC/012\n，狑／％ ２４．５～２６．５ ７．０～８．５ Ａ Ａ．４\nQRTJ (cid:155)(cid:156) (cid:147)\n（ ），狑／％ ≤ ０．０５ Ａ Ａ．５\n(cid:158)0(cid:159)(cid:160)V MNOP (cid:155)(cid:156) (cid:147)\n（Ｆ）（ ）／（ｍｇ／ｋｇ） ≤ ５０．０ ＧＢ／Ｔ５００９．１８\nU MNOP\n（Ｐｂ）（ ）／（ｍｇ／ｋｇ） ≤ ２．０ Ａ Ａ．６\nW MNOP (cid:155)(cid:156) (cid:147)\n（Ａｓ）（ ）／（ｍｇ／ｋｇ） ≤ ２．０ Ａ Ａ．７\nd MNOP (cid:155)(cid:156) (cid:147)\n（ Ｐｂ ）（ ）／（ｍｇ／ｋｇ） ≤ １０ Ａ Ａ．８\nefg M P MNOP (cid:155)(cid:156) (cid:147)\n２",
+          "bbox": null,
+          "score": 0.0,
+          "rationale": "BM25 score: 0.0000"
+        },
+        {
+          "rank": 4,
+          "unit_id": "p0004_b0000",
+          "doc_id": "GB 1886.3-2021_20260106_124838_cca7c76a",
+          "page_id": 4,
+          "block_id": "p0004_b0000",
+          "snippet": "犌犅１８８６．３—２０２１\n犃\nF G\nHIJK\n： ， 。\nLM NHIJKOPQRS4T-UVWXYZ[X \\]^_‘abcR%&7defg h\n， 。 ， 。\n>^ _ijklOmn opqrst_uvQwxy z{|_uv}~\n犃．１\n(cid:127)(cid:128)(cid:129)(cid:130)\n， ＧＢ／Ｔ６６８２ 。\n!\"#¡i(cid:143).mC(cid:148)¢£⁄¥ƒ§7z¤ 'K“«‹(cid:143).m (cid:147)(cid:127)(cid:128)Xb›C (cid:143)\n、 ， ， ＧＢ／Ｔ６０１、ＧＢ／Ｔ６０２、\n[(cid:147)¡iGHfi(cid:128)i\"#(cid:160)fl (cid:176).–(cid:176)’ (cid:148)¢£⁄¥ƒ§7z¤ 's\nＧＢ／Ｔ６０３ 。 ， 。\n†(cid:127)(cid:128)(cid:176)‡ ¡i(cid:160)fl(cid:148)·⁄¥i(cid:181)¶(cid:160).•(cid:176)¤ 'KC(cid:160)fl\n犃．２\n(cid:...",
+          "bbox": null,
+          "score": 0.0,
+          "rationale": "BM25 score: 0.0000"
+        }
+      ]
+    },
+    "elapsed_ms": 0
+  },
+  "status": {
+    "ok": true,
+    "error_type": null,
+    "error_message": null,
+    "stack": null
+  },
+  "started_at": "2026-01-06T14:00:37.003929+00:00",
+  "finished_at": "2026-01-06T14:00:37.004246+00:00",
+  "config_snapshot": {
+    "data_root": "data",
+    "docs_dir": "data/docs",
+    "indices_dir": "data/indices",
+    "runs_dir": "data/runs",
+    "reports_dir": "data/reports",
+    "chunk_level": "block",
+    "top_k_retrieve": 20,
+    "top_k_rerank": 10,
+    "top_k_evidence": 5,
+    "citation_level": "block",
+    "bbox_mode": "none",
+    "embedder_name": "stub-embedder",
+    "reranker_name": "none",
+    "llm_name": "stub-llm",
+    "max_context_chars": 12000,
+    "require_citations": true
+  }
+}

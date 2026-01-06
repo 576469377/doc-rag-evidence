@@ -1,0 +1,45 @@
+# Core configuration for V0 doc-rag-evidence system
+# Reference: core/schemas.py -> AppConfig
+
+# ===== Path Configuration =====
+data_root: "data"
+docs_dir: "data/docs"
+indices_dir: "data/indices"
+runs_dir: "data/runs"
+reports_dir: "data/reports"
+
+# ===== Granularity & Retrieval =====
+# chunk_level: page | block  (V0 uses block for better precision)
+chunk_level: "block"
+
+# Retrieval pipeline
+top_k_retrieve: 20      # Initial retrieval candidates
+top_k_rerank: 10        # After reranking (if enabled)
+top_k_evidence: 5       # Final evidence items for generation
+
+# ===== Citation & Evidence Display =====
+# citation_level: page | block (how to cite in answer)
+citation_level: "block"
+
+# bbox_mode: none | normalized | absolute_px
+# V0 uses "none" - bbox can be added later
+bbox_mode: "none"
+
+# ===== Model Configuration =====
+# V0 uses stub implementations for offline demo
+embedder_name: "stub-embedder"      # For future vector retrieval
+reranker_name: "none"               # No reranking in V0
+llm_name: "stub-llm"                # Template-based generator
+
+# ===== Context & Safety =====
+max_context_chars: 12000            # Hard cap for LLM context
+require_citations: true             # Force citation output
+
+# ===== Data Artifact Path Rules =====
+# Documents: data/docs/{doc_id}/meta.json
+# Pages: data/docs/{doc_id}/pages/{page_id:04d}/text.json
+# Blocks: data/docs/{doc_id}/pages/{page_id:04d}/blocks.json
+# Page images: data/docs/{doc_id}/pages/{page_id:04d}/page.png (optional)
+# Indices: data/indices/{index_name}/* 
+# Run logs: data/runs/{query_id}.json
+# Eval reports: data/reports/{dataset}/{timestamp}/report.json + predictions.csv
