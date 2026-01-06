@@ -31,6 +31,39 @@ embedder_name: "stub-embedder"      # For future vector retrieval
 reranker_name: "none"               # No reranking in V0
 llm_name: "stub-llm"                # Template-based generator
 
+# ===== OCR Configuration (V0.1+) =====
+ocr:
+  provider: "vllm"                  # vllm | sglang | mock
+  model: "tencent/HunyuanOCR"       # HunyuanOCR model name
+  model_path: "/workspace/cache/HunyuanOCR"  # Local model path
+  endpoint: "http://localhost:8000"
+  timeout: 300
+  cache_enabled: true
+
+# ===== Dense Embedding Retrieval (V0.1+) =====
+dense:
+  enabled: false                    # Enable dense retrieval
+  embedder_type: "vllm"             # vllm | sglang embedding API
+  model: "Qwen/Qwen3-Embedding-0.6B"  # Model name
+  model_path: "/workspace/cache/Qwen3-Embedding-0.6B"  # Local model path
+  endpoint: "http://localhost:8001" # vllm server on GPU 1
+  index_type: "Flat"                # Flat | IVF
+  nlist: 100                        # IVF clusters
+  nprobe: 10                        # IVF search clusters
+  batch_size: 32
+
+# ===== ColPali Vision Retrieval (V0.1+) =====
+colpali:
+  enabled: false                    # Enable vision retrieval
+  model: "/workspace/cache/tomoro-colqwen3-embed-4b"  # ColQwen3 local model
+  device: "cuda:2"                  # CUDA device for model (GPU 2 - GPU 0/1 occupied)
+  max_global_pool: 100              # Coarse stage top-N
+  cache_dir: "data/cache/colpali"   # Embedding cache
+
+# ===== Retrieval Mode (V0.1+) =====
+# retrieval_mode: bm25 | dense | colpali | hybrid
+retrieval_mode: "bm25"              # Default to BM25 baseline
+
 # ===== Context & Safety =====
 max_context_chars: 12000            # Hard cap for LLM context
 require_citations: true             # Force citation output

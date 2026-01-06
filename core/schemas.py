@@ -38,6 +38,39 @@ class AppConfig(BaseModel):
     max_context_chars: int = Field(default=12000, description="Hard cap for context assembly")
     require_citations: bool = Field(default=True, description="Force output citations if possible")
 
+    # V0.1+: OCR configuration
+    ocr: Dict[str, Any] = Field(default_factory=lambda: {
+        "provider": "sglang",
+        "model": "deepseek_ocr",
+        "endpoint": "http://127.0.0.1:30000",
+        "timeout": 60,
+        "cache_enabled": True
+    })
+
+    # V0.1+: Dense embedding retrieval
+    dense: Dict[str, Any] = Field(default_factory=lambda: {
+        "enabled": False,
+        "embedder_type": "sglang",
+        "model": "Qwen/Qwen3-Embedding-0.6B",
+        "endpoint": "http://127.0.0.1:30000",
+        "index_type": "Flat",
+        "nlist": 100,
+        "nprobe": 10,
+        "batch_size": 32
+    })
+
+    # V0.1+: ColPali vision retrieval
+    colpali: Dict[str, Any] = Field(default_factory=lambda: {
+        "enabled": False,
+        "model": "vidore/colqwen2-v0.1",
+        "device": "cuda:0",
+        "max_global_pool": 100,
+        "cache_dir": "data/cache/colpali"
+    })
+
+    # V0.1+: Retrieval mode selection
+    retrieval_mode: Literal["bm25", "dense", "colpali", "hybrid"] = Field(default="bm25")
+
 
 # ---------- Document artifacts ----------
 class DocumentMeta(BaseModel):
@@ -48,6 +81,14 @@ class DocumentMeta(BaseModel):
     created_at: str  # ISO time string
     page_count: int = 0
     extra: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PageMeta(BaseModel):
+    """Lightweight page metadata."""
+    doc_id: str
+    page_id: int
+    has_text: bool = False
+    has_image: bool = False
 
 
 class PageText(BaseModel):

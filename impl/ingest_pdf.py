@@ -22,6 +22,11 @@ try:
 except ImportError:
     pdfplumber = None
 
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    fitz = None
+
 from core.schemas import (
     AppConfig, DocumentMeta, PageArtifact, PageText, Block
 )
@@ -37,6 +42,11 @@ class PDFIngestorV0:
             raise ImportError(
                 "pdfplumber is required for PDF ingestion. "
                 "Install with: pip install pdfplumber"
+            )
+        if fitz is None:
+            raise ImportError(
+                "PyMuPDF is required for page rendering. "
+                "Install with: pip install pymupdf"
             )
 
     def ingest(self, source_path: str, config: AppConfig) -> DocumentMeta:
@@ -97,6 +107,9 @@ class PDFIngestorV0:
         artifacts = []
         source_path = Path(meta.source_path)
 
+        # Open PDF with PyMuPDF for page rendering
+        pdf_doc = fitz.open(source_path)
+
         with pdfplumber.open(source_path) as pdf:
             for page_idx, page in enumerate(pdf.pages):
                 page_id = page_idx  # 0-indexed
@@ -120,18 +133,35 @@ class PDFIngestorV0:
                         text=text_content
                     )
 
+                # Render page image using PyMuPDF
+                page_image_path = None
+                try:
+                    page_dir = self.store._get_page_dir(doc_id, page_id)
+                    page_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Render at 2x DPI for better quality
+                    mat = fitz.Matrix(2.0, 2.0)
+                    pix = pdf_doc[page_idx].get_pixmap(matrix=mat)
+                    
+                    image_path = page_dir / "page.png"
+                    pix.save(str(image_path))
+                    page_image_path = str(image_path)
+                except Exception as e:
+                    print(f"Warning: Failed to render page {page_id}: {e}")
+
                 artifact = PageArtifact(
                     doc_id=doc_id,
                     page_id=page_id,
                     text=page_text,
                     blocks=blocks,
-                    image_path=None  # V0: no page rendering
+                    image_path=page_image_path
                 )
 
                 # Save artifact
                 self.store.save_page_artifact(artifact)
                 artifacts.append(artifact)
 
+        pdf_doc.close()
         return artifacts
 
     def _generate_doc_id(self, path: Path) -> str:

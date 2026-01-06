@@ -1,10 +1,45 @@
-# 📚 Doc RAG Evidence System V0
+# 📚 Doc RAG Evidence System
 
-多模态文档检索增强问答与证据定位系统 - V0版本
+多模态文档检索增强问答与证据定位系统
+
+## 🚀 Quick Start (推荐 - V1 UI集成版)
+
+### 一键启动
+```bash
+cd /workspace/doc-rag-evidence
+./start.sh
+```
+
+这将自动：
+1. ✅ 启动 HunyuanOCR (GPU 0, Port 8000)
+2. ✅ 启动 Qwen3-Embedding (GPU 1, Port 8001)
+3. ✅ 启动 UI 界面 (Port 7860)
+
+### 访问UI
+浏览器打开: **http://localhost:7860**
+
+### UI操作流程
+1. **📤 上传文档**: Document Management → Upload PDF → ☑ Use OCR → Ingest
+2. **⚙️ 构建索引**: Document Management → Build Indices → 选择索引类型 → Build
+3. **🔍 查询**: Query & Answer → 输入问题 → Ask Question
+
+### 停止服务
+```bash
+./scripts/stop_all_vllm.sh
+```
+
+### 📚 完整文档
+- **[快速启动指南](docs/QUICKSTART.md)** - 详细使用说明
+- **[系统升级说明](docs/VLLM_UPGRADE.md)** - vLLM双卡部署详解  
+- **[HunyuanOCR配置](docs/HUNYUAN_OCR_GUIDE.md)** - OCR服务配置
+
+---
 
 ## 🎯 系统简介
 
 本系统提供完整的文档检索增强问答（RAG）能力，支持：
+
+### V0 (Baseline) ✅
 - ✅ PDF文档导入与结构化处理
 - ✅ BM25文本检索（块级/页级可选）
 - ✅ 问答生成与证据追溯
@@ -12,42 +47,78 @@
 - ✅ 批量评测与报告导出
 - ✅ 完整的运行日志记录（软著友好）
 
-### V0 特性
-
-- **无需外部API**：使用模板式生成器，可离线演示
-- **可追溯性**：每次问答都有完整的运行日志（retrieval → evidence → generation）
-- **灵活配置**：YAML配置文件，支持page/block粒度切换
-- **标准化存储**：规范的文件结构，便于审计与扩展
+### V0.1+ (Multi-Modal) 🆕
+- ✅ **Page Rendering**: PyMuPDF高质量页面渲染
+- ✅ **OCR Integration**: SGLang API集成（DeepSeek/Hunyuan OCR）
+- ✅ **Dense Text Retrieval**: FAISS + Qwen3-Embedding语义检索
+- ✅ **ColPali Vision Retrieval**: 两阶段视觉检索（全局+Late Interaction）
+- ✅ **Unified Block Builder**: 统一的文本块生成（OCR/文本分割）
+- ✅ **Multi-Mode UI**: 检索模式切换器（BM25/Dense/ColPali）
+- ✅ **GPU Resource Management**: 单GPU部署ColPali，避免显存冲突
 
 ---
 
 ## 🚀 快速开始
 
-### 1. 安装依赖
+### V0 (Baseline)
 
+**依赖**：
 ```bash
-pip install -r requirements.txt
+pip install pydantic pyyaml pdfplumber rank-bm25 gradio
 ```
 
-**依赖包说明**：
-- `pydantic>=2.0.0` - 数据验证
-- `pyyaml>=6.0` - 配置文件解析
-- `pdfplumber>=0.10.0` - PDF文本提取
-- `rank-bm25>=0.2.2` - BM25检索
-- `gradio>=4.0.0` - Web界面
-
-### 2. 启动Web界面
-
+**启动**：
 ```bash
 python run.py
-# 或使用 make
-make run
+# 界面: http://127.0.0.1:7860
 ```
 
-界面将在 `http://127.0.0.1:7860` 打开，包含三个标签页：
-1. **文档管理**：上传PDF、查看文档列表、删除文档
-2. **问答查询**：输入问题、查看答案与证据
-3. **批量评测**：上传评测数据集、运行评估、下载结果
+### V0.1+ (Multi-Modal)
+
+**依赖**：
+```bash
+pip install -r requirements.txt
+# 包含: pymupdf, Pillow, faiss-cpu, torch, transformers
+```
+
+**配置** (`configs/app.yaml`):
+```yaml
+# 启用OCR
+ocr:
+  provider: "sglang"
+  model: "deepseek_ocr"
+  endpoint: "http://127.0.0.1:30000"
+
+# 启用Dense检索
+dense:
+  enabled: true
+  model: "Qwen/Qwen3-Embedding-0.6B"
+  endpoint: "http://127.0.0.1:30000"
+
+# 启用ColPali视觉检索
+colpali:
+  enabled: true
+  model: "vidore/colqwen2-v0.1"
+  device: "cuda:0"
+```
+
+**一键启动完整流程**：
+```bash
+# 1. 启动SGLang服务器（另一终端）
+CUDA_VISIBLE_DEVICES=1 python -m sglang.launch_server \
+  --model Qwen/Qwen3-Embedding-0.6B \
+  --port 30000
+
+# 2. 导入文档 + 构建索引 + 启动UI
+python run_v1.py \
+  --ingest-dir data/pdfs \
+  --use-ocr \
+  --build-all \
+  --ui
+
+# 界面: http://localhost:7860
+# 在UI中选择检索模式: BM25 / Dense / ColPali
+```
 
 ### 3. 命令行使用
 
@@ -209,16 +280,42 @@ V0版本为后续扩展预留接口：
 ### 已实现（V0）
 - ✅ PDF文本提取（pdfplumber）
 - ✅ BM25检索
+## ✅ V0 功能（已实现）
+- ✅ PDF文档导入与分块
+- ✅ BM25检索（block/page级）
+- ✅ 证据选择与排序
 - ✅ 模板式生成（无需API）
 - ✅ 运行日志与追溯
 
-### 待扩展（V1+）
-- 🔲 向量检索（FAISS/Milvus）
-- 🔲 重排序器（cross-encoder）
-- 🔲 真实LLM集成（OpenAI/Anthropic）
-- 🔲 OCR支持（图片文档）
+## ✅ V0.1 功能（已实现）🆕
+- ✅ PyMuPDF页面渲染（144 DPI PNG）
+- ✅ OCR集成（SGLang API，DeepSeek/Hunyuan）
+- ✅ 统一Block Builder（OCR/文本分割）
+- ✅ Dense Text检索（FAISS + Qwen3-Embedding）
+- ✅ ColPali视觉检索（两阶段Late Interaction）
+- ✅ 多模态UI（BM25/Dense/ColPali切换）
+- ✅ GPU资源管理（单卡ColPali）
+
+## 🔲 待扩展（V0.2+）
+- 🔲 Hybrid融合策略（多检索源加权）
+- 🔲 重排序器（Qwen3-Reranker）
+- 🔲 真实LLM集成（替换模板生成器）
+- 🔲 扩展评测指标（recall@k, MRR, NDCG）
+- 🔲 增量索引更新
+- 🔲 多语言OCR支持
 - 🔲 BBox定位与高亮
-- 🔲 多模态模型（视觉理解）
+
+---
+
+## 📚 文档索引
+
+| 文档 | 描述 | 读者 |
+|------|------|------|
+| [README.md](README.md) | 快速入门和总览 | 所有用户 |
+| [docs/user_manual_v0.md](docs/user_manual_v0.md) | V0详细用户手册 | V0用户 |
+| [docs/v0.1_multimodal_retrieval.md](docs/v0.1_multimodal_retrieval.md) | V0.1多模态检索指南 | V0.1用户 |
+| [docs/v0.1_implementation_summary.md](docs/v0.1_implementation_summary.md) | V0.1技术实现总结 | 开发者 |
+| [IMPLEMENTATION_COMPLETE.md](IMPLEMENTATION_COMPLETE.md) | V0.1实现完成报告 | 项目经理 |
 
 ---
 

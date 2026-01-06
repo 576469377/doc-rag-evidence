@@ -94,7 +94,11 @@ class DocumentStoreLocal:
         # Copy page image if provided
         if artifact.image_path and Path(artifact.image_path).exists():
             dest_image = page_dir / "page.png"
-            shutil.copy2(artifact.image_path, dest_image)
+            # Only copy if source and destination are different
+            src_path = Path(artifact.image_path).resolve()
+            dest_path = dest_image.resolve()
+            if src_path != dest_path:
+                shutil.copy2(artifact.image_path, dest_image)
 
     def load_page_artifact(self, doc_id: str, page_id: int) -> Optional[PageArtifact]:
         """Load page artifact from disk."""
@@ -127,9 +131,45 @@ class DocumentStoreLocal:
 
         return artifact
 
+    def load_blocks(self, doc_id: str, page_id: int) -> List:
+        """Load blocks for a specific page."""
+        from core.schemas import Block
+        
+        page_dir = self._get_page_dir(doc_id, page_id)
+        blocks_path = page_dir / "blocks.json"
+        
+        if not blocks_path.exists():
+            return []
+        
+        with open(blocks_path, "r", encoding="utf-8") as f:
+            blocks_data = json.load(f)
+        
+        return [Block(**b) for b in blocks_data]
+
     def _get_page_dir(self, doc_id: str, page_id: int) -> Path:
         """Get standardized page directory path."""
         return self.docs_dir / doc_id / "pages" / f"{page_id:04d}"
+
+    def list_pages(self, doc_id: str) -> List[dict]:
+        """List page metadata for a document."""
+        from core.schemas import PageMeta
+        pages = []
+        pages_base = self.docs_dir / doc_id / "pages"
+        if not pages_base.exists():
+            return pages
+
+        for page_dir in sorted(pages_base.iterdir()):
+            if page_dir.is_dir():
+                page_id = int(page_dir.name)
+                # Create basic page metadata
+                page_meta = PageMeta(
+                    doc_id=doc_id,
+                    page_id=page_id,
+                    has_text=(page_dir / "text.json").exists(),
+                    has_image=(page_dir / "page.png").exists()
+                )
+                pages.append(page_meta)
+        return pages
 
     def get_all_pages(self, doc_id: str) -> List[PageArtifact]:
         """Load all page artifacts for a document."""

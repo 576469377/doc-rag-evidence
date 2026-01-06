@@ -104,6 +104,13 @@ class BM25IndexerRetriever:
 
         self.units = units
 
+        # Check if units is empty
+        if not units:
+            raise ValueError(
+                "Cannot build BM25 index: no index units provided. "
+                "Make sure documents have text content (check OCR if using images)."
+            )
+
         # Tokenize corpus (simple word-level tokenization)
         self.tokenized_corpus = [
             self._tokenize(unit.text) for unit in units

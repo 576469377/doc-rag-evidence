@@ -4,14 +4,27 @@ pyyaml>=6.0
 
 # PDF processing
 pdfplumber>=0.10.0
+pymupdf>=1.23.0  # PyMuPDF for page rendering
+
+# Image processing
+Pillow>=10.0.0
 
 # Search & Retrieval
 rank-bm25>=0.2.2
 
+# Dense retrieval (V0.1+)
+numpy>=1.24.0
+faiss-cpu>=1.7.4  # Use faiss-gpu if CUDA available
+requests>=2.28.0  # For API calls
+
+# Vision retrieval (V0.1+)
+torch>=2.0.0  # PyTorch for ColPali
+transformers>=4.35.0  # HuggingFace transformers
+# flash-attn>=2.3.0  # Optional: flash attention for ColPali (requires CUDA)
+
 # UI
 gradio>=4.0.0
+httpx[socks]  # Required for gradio with SOCKS proxy
 
-# Optional: for future enhancements
-# numpy>=1.24.0
-# faiss-cpu>=1.7.4  # for vector retrieval
-# openai>=1.0.0  # for real LLM integration
+# Optional: for real LLM integration
+# openai>=1.0.0
