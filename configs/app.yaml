@@ -42,7 +42,7 @@ ocr:
 
 # ===== Dense Embedding Retrieval (V0.1+) =====
 dense:
-  enabled: false                    # Enable dense retrieval
+  enabled: true                     # Enable dense retrieval
   embedder_type: "vllm"             # vllm | sglang embedding API
   model: "Qwen/Qwen3-Embedding-0.6B"  # Model name
   model_path: "/workspace/cache/Qwen3-Embedding-0.6B"  # Local model path
@@ -54,7 +54,7 @@ dense:
 
 # ===== ColPali Vision Retrieval (V0.1+) =====
 colpali:
-  enabled: false                    # Enable vision retrieval
+  enabled: true                     # Enable vision retrieval
   model: "/workspace/cache/tomoro-colqwen3-embed-4b"  # ColQwen3 local model
   device: "cuda:2"                  # CUDA device for model (GPU 2 - GPU 0/1 occupied)
   max_global_pool: 100              # Coarse stage top-N

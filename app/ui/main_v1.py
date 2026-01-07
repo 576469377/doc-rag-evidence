@@ -25,7 +25,7 @@ from infra.store_local import DocumentStoreLocal
 from infra.runlog_local import RunLoggerLocal
 from impl.ingest_pdf_v1 import PDFIngestorV1
 from impl.index_bm25 import BM25IndexerRetriever
-from impl.index_dense import DenseIndexerRetriever, SGLangEmbedder
+from impl.index_dense import DenseIndexerRetriever, VLLMEmbedder
 from impl.index_colpali import ColPaliRetriever
 from impl.selector_topk import TopKEvidenceSelector
 from impl.generator_template import TemplateGenerator
@@ -82,42 +82,51 @@ class DocRAGUIV1:
             retriever = BM25IndexerRetriever(self.store)
             retriever.load(self.config, index_name=bm25_index_name)
             self.retrievers["bm25"] = retriever
-            print(f"Loaded BM25 index: {len(retriever.units)} units")
+            print(f"✅ Loaded BM25 index: {len(retriever.units)} units")
         except Exception as e:
-            print(f"Failed to load BM25 index: {e}")
+            print(f"❌ Failed to load BM25 index: {e}")
         
-        # Dense
+        # Dense (vLLM embedding)
         if self.config.dense.get("enabled"):
-            dense_index_dir = indices_dir / "dense"
+            dense_index_name = "dense_default"
+            dense_index_dir = indices_dir / dense_index_name
             if dense_index_dir.exists():
                 try:
-                    embedder = SGLangEmbedder(
+                    embedder = VLLMEmbedder(
                         endpoint=self.config.dense["endpoint"],
-                        model=self.config.dense["model"]
+                        model=self.config.dense["model"],
+                        batch_size=self.config.dense.get("batch_size", 32)
                     )
                     retriever = DenseIndexerRetriever.load(dense_index_dir, embedder)
                     self.retrievers["dense"] = retriever
-                    print(f"Loaded Dense index: {len(retriever.units)} units")
+                    print(f"✅ Loaded Dense index: {len(retriever.units)} units (vLLM @ {self.config.dense['endpoint']})")
                 except Exception as e:
-                    print(f"Failed to load Dense index: {e}")
-                    print(f"Loaded Dense index: {len(retriever.units)} units")
-                except Exception as e:
-                    print(f"Failed to load Dense index: {e}")
+                    print(f"❌ Failed to load Dense index: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"⚠️  Dense index not found at {dense_index_dir}")
         
-        # ColPali
+        # ColPali (vision embedding on GPU 2)
         if self.config.colpali.get("enabled"):
-            colpali_index_dir = indices_dir / "colpali"
+            colpali_index_name = "colpali_default"
+            colpali_index_dir = indices_dir / colpali_index_name
             if colpali_index_dir.exists():
                 try:
+                    device = self.config.colpali.get("device", "cuda:2")
                     retriever = ColPaliRetriever.load(
                         colpali_index_dir,
                         model_name=self.config.colpali["model"],
-                        device=self.config.colpali.get("device", "cuda:0")
+                        device=device
                     )
                     self.retrievers["colpali"] = retriever
-                    print(f"Loaded ColPali index")
+                    print(f"✅ Loaded ColPali index (device={device})")
                 except Exception as e:
-                    print(f"Failed to load ColPali index: {e}")
+                    print(f"❌ Failed to load ColPali index: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"⚠️  ColPali index not found at {colpali_index_dir}")
 
     def launch(self, share: bool = False):
         """Launch Gradio UI."""
@@ -422,12 +431,17 @@ class DocRAGUIV1:
             if build_dense:
                 status += "⏳ Building Dense index...\n"
                 try:
-                    from impl.index_dense import VLLMEmbedder
                     embedder = VLLMEmbedder(
                         endpoint=self.config.dense["endpoint"],
-                        model=self.config.dense["model"]
+                        model=self.config.dense["model"],
+                        batch_size=self.config.dense.get("batch_size", 32)
                     )
-                    retriever = DenseIndexerRetriever(embedder)
+                    retriever = DenseIndexerRetriever(
+                        embedder=embedder,
+                        index_type=self.config.dense.get("index_type", "Flat"),
+                        nlist=self.config.dense.get("nlist", 100),
+                        nprobe=self.config.dense.get("nprobe", 10)
+                    )
                     retriever.build_index(all_units, self.config)
                     
                     index_dir = Path(self.config.indices_dir) / f"dense_{suffix}"
@@ -436,40 +450,36 @@ class DocRAGUIV1:
                     
                     # Reload
                     self.retrievers["dense"] = retriever
-                    status += f"✅ Dense index built: dense_{suffix} ({len(all_units)} units)\n\n"
+                    status += f"✅ Dense index built: dense_{suffix} ({len(all_units)} units)\n"
+                    status += f"   vLLM endpoint: {self.config.dense['endpoint']}\n\n"
                 except Exception as e:
+                    import traceback
                     status += f"❌ Dense build failed: {str(e)}\n"
-                    status += "   Make sure vllm embedding server is running on port 8001\n\n"
+                    status += f"   {traceback.format_exc()}\n"
+                    status += "   Make sure vLLM embedding server is running on port 8001\n\n"
             
             # Build ColPali
             if build_colpali:
-                status += "⏳ Building ColPali index...\n"
+                status += "⏳ Building ColPali index (this may take several minutes)...\n"
                 try:
+                    device = self.config.colpali.get("device", "cuda:2")
                     retriever = ColPaliRetriever(
                         model_name=self.config.colpali["model"],
-                        device=self.config.colpali.get("device", "cuda:0")
+                        device=device,
+                        max_global_pool_pages=self.config.colpali.get("max_global_pool", 100)
                     )
                     
-                    # Build with page images
-                    page_data = []
+                    # Build page list (doc_id, page_id) tuples
+                    page_list = []
                     for meta in docs:
-                        pages = self.store.list_pages(meta.doc_id)
-                        for page_meta in pages:
-                            image_path = self.store._get_page_dir(meta.doc_id, page_meta.page_id) / "page.png"
-                            if image_path.exists():
-                                page_data.append({
-                                    "doc_id": meta.doc_id,
-                                    "page_id": page_meta.page_id,
-                                    "image_path": str(image_path)
-                                })
+                        for page_id in range(meta.page_count):
+                            page_list.append((meta.doc_id, page_id))
                     
-                    if not page_data:
-                        status += "❌ ColPali build failed: No page images found\n"
-                        status += "   Please ingest documents with OCR to generate page images\n\n"
+                    if not page_list:
+                        status += "❌ ColPali build failed: No pages found\n\n"
                     else:
-                        # Convert page_data to format expected by build_index
-                        page_image_paths = [(p["doc_id"], p["page_id"], p["image_path"]) for p in page_data]
-                        retriever.build_index(page_image_paths)
+                        status += f"   Encoding {len(page_list)} page images on {device}...\n"
+                        retriever.build_index(page_list, self.config)
                         
                         index_dir = Path(self.config.indices_dir) / f"colpali_{suffix}"
                         index_dir.mkdir(parents=True, exist_ok=True)
@@ -477,10 +487,12 @@ class DocRAGUIV1:
                         
                         # Reload
                         self.retrievers["colpali"] = retriever
-                        status += f"✅ ColPali index built: colpali_{suffix} ({len(page_data)} pages)\n\n"
+                        status += f"✅ ColPali index built: colpali_{suffix} ({len(page_list)} pages)\n"
+                        status += f"   Device: {device}\n\n"
                 except Exception as e:
                     import traceback
-                    status += f"❌ ColPali build failed: {str(e)}\n{traceback.format_exc()}\n\n"
+                    status += f"❌ ColPali build failed: {str(e)}\n"
+                    status += f"   {traceback.format_exc()}\n\n"
             
             status += "=" * 50 + "\n"
             status += "🎉 Index building complete!\n"
@@ -541,22 +553,24 @@ class DocRAGUIV1:
             )
             
             # Run pipeline
-            result = self.pipeline.run(query_input, self.config)
+            result = self.pipeline.answer(query_input, self.config)
             
             # Format evidence table
             evidence_rows = []
-            for i, ev in enumerate(result.evidence_items, 1):
-                source = ev.metadata.get("source", retrieval_mode)
-                evidence_rows.append([
-                    i,
-                    source,
-                    ev.doc_id,
-                    ev.page_id,
-                    f"{ev.score:.4f}",
-                    ev.snippet[:100] + "..." if len(ev.snippet) > 100 else ev.snippet
-                ])
+            if result.evidence and result.evidence.evidence:
+                for i, ev in enumerate(result.evidence.evidence, 1):
+                    evidence_rows.append([
+                        i,
+                        retrieval_mode,  # Use retrieval mode as source
+                        ev.doc_id,
+                        ev.page_id,
+                        f"{ev.score:.4f}",
+                        ev.snippet[:100] + "..." if len(ev.snippet) > 100 else ev.snippet
+                    ])
             
-            return result.answer, evidence_rows, query_input.query_id
+            answer = result.generation.output.answer if result.generation else "No answer generated."
+            
+            return answer, evidence_rows, query_input.query_id
             
         except Exception as e:
             import traceback

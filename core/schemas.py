@@ -153,7 +153,7 @@ class RetrieveHit(BaseModel):
     text: str
     score: float
     bbox: Optional[BBox] = None
-    source: Literal["bm25", "dense", "hybrid", "rerank"] = "bm25"
+    source: Literal["bm25", "dense", "colpali", "hybrid", "rerank"] = "bm25"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 

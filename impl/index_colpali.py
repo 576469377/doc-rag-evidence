@@ -2,11 +2,14 @@
 ColPali-based vision retrieval for document pages.
 Two-stage retrieval: coarse (global vectors) + fine (late interaction).
 """
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union, TYPE_CHECKING
 from pathlib import Path
 import json
 import numpy as np
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    from core.schemas import QueryInput, AppConfig, RetrievalResult
 
 try:
     import torch
@@ -23,7 +26,7 @@ except ImportError:
 
 from PIL import Image
 
-from core.schemas import RetrieveHit
+from core.schemas import RetrieveHit, AppConfig
 
 
 @dataclass
@@ -178,20 +181,46 @@ class ColPaliRetriever:
         
         return query_vecs
     
-    def build_index(self, page_image_paths: List[Tuple[str, int, str]]):
+    def build_index(
+        self,
+        page_data: Union[List[Tuple[str, int]], List[Tuple[str, int, str]]],
+        config: Optional[AppConfig] = None
+    ):
         """
         Build index from page images.
         
         Args:
-            page_image_paths: List of (doc_id, page_id, image_path) tuples
+            page_data: Either:
+                - List of (doc_id, page_id) tuples (requires config to locate images)
+                - List of (doc_id, page_id, image_path) tuples (deprecated)
+            config: AppConfig (required if page_data is (doc_id, page_id) format)
         """
-        print(f"Building ColPali index for {len(page_image_paths)} pages...")
+        print(f"Building ColPali index for {len(page_data)} pages...")
         
         page_ids = []
         global_vectors = []
         patch_vectors = []
         
-        for doc_id, page_id, image_path in page_image_paths:
+        for item in page_data:
+            if len(item) == 2:
+                # Format: (doc_id, page_id) - need to construct image path
+                doc_id, page_id = item
+                if config is None:
+                    raise ValueError("config is required when page_data is (doc_id, page_id) format")
+                # Construct path: data/docs/{doc_id}/pages/{page_id:04d}/page.png
+                image_path = Path(config.docs_dir) / doc_id / "pages" / f"{page_id:04d}" / "page.png"
+                image_path = str(image_path)
+            elif len(item) == 3:
+                # Format: (doc_id, page_id, image_path) - backward compatibility
+                doc_id, page_id, image_path = item
+            else:
+                raise ValueError(f"Invalid page_data item format: {item}")
+            
+            # Check if image exists
+            if not Path(image_path).exists():
+                print(f"⚠️  Warning: Image not found: {image_path}")
+                continue
+            
             # Check cache first
             cached = self._load_cached_embeddings(doc_id, page_id)
             if cached:
@@ -206,6 +235,9 @@ class ColPaliRetriever:
             page_ids.append((doc_id, page_id))
             global_vectors.append(global_vec)
             patch_vectors.append(patch_vecs)
+        
+        if not page_ids:
+            raise ValueError("No valid pages found to build index")
         
         # Stack global vectors
         global_vectors_array = np.stack(global_vectors).astype(np.float32)
@@ -314,12 +346,14 @@ class ColPaliRetriever:
         """
         # Use processor's score_multi_vector if available (ColQwen3 API)
         if hasattr(self.processor, 'score_multi_vector'):
-            # Convert to tensor format expected by score_multi_vector
-            query_tensor = torch.from_numpy(query_vecs).unsqueeze(0)  # [1, num_tokens, dim]
-            doc_tensor = torch.from_numpy(page_patch_vecs).unsqueeze(0)  # [1, num_patches, dim]
+            # Convert to tensor format: (sequence_length, embedding_dim)
+            # Note: score_multi_vector expects list of 2D tensors
+            query_tensor = torch.from_numpy(query_vecs).to(self.device)  # [num_tokens, dim]
+            doc_tensor = torch.from_numpy(page_patch_vecs).to(self.device)  # [num_patches, dim]
             
-            # score_multi_vector expects lists of tensors
-            scores = self.processor.score_multi_vector([query_tensor], [doc_tensor])
+            # score_multi_vector expects list of 2D tensors for each query/doc
+            scores = self.processor.score_multi_vector([query_tensor], [doc_tensor], device=self.device)
+            # Returns shape [n_queries, n_passages] -> [1, 1]
             return float(scores[0][0])
         
         # Fallback: manual MaxSim implementation
@@ -340,10 +374,11 @@ class ColPaliRetriever:
     
     def retrieve(
         self,
-        query: str,
-        top_k: int = 10,
+        query: Union[str, 'QueryInput'],
+        config: Optional['AppConfig'] = None,
+        top_k: Optional[int] = None,
         coarse_k: Optional[int] = None
-    ) -> List[RetrieveHit]:
+    ) -> Union[List[RetrieveHit], 'RetrievalResult']:
         """
         Two-stage retrieval.
         
@@ -351,21 +386,42 @@ class ColPaliRetriever:
         Stage 2: Rerank using late interaction on patch vectors
         
         Args:
-            query: Query text
-            top_k: Final number of results
+            query: Query text or QueryInput object
+            config: AppConfig (optional, for compatibility with Pipeline)
+            top_k: Final number of results (defaults to config.top_k_retrieve)
             coarse_k: Number of candidates in coarse stage (default: max_global_pool_pages)
             
         Returns:
-            List of RetrieveHit objects sorted by score (descending)
+            List of RetrieveHit objects (if query is str) or RetrievalResult (if QueryInput)
         """
+        import time
+        from core.schemas import QueryInput, RetrievalResult
+        
+        # Handle QueryInput vs string
+        if isinstance(query, QueryInput):
+            query_str = query.question
+            query_id = query.query_id
+            return_result = True
+            if config:
+                top_k = top_k or config.top_k_retrieve
+        else:
+            query_str = query
+            query_id = None
+            return_result = False
+        
+        top_k = top_k or 10
+        start_time = time.time()
+        
         if self.index is None or self.store is None:
+            if return_result:
+                return RetrievalResult(query_id=query_id, hits=[], elapsed_ms=0)
             return []
         
         if coarse_k is None:
             coarse_k = min(self.max_global_pool_pages, len(self.store.page_ids))
         
         # Embed query
-        query_vecs = self._embed_query(query)
+        query_vecs = self._embed_query(query_str)
         
         # Stage 1: Coarse retrieval using global query vector (mean pooling)
         global_query_vec = query_vecs.mean(axis=0).reshape(1, -1).astype(np.float32)
@@ -393,16 +449,25 @@ class ColPaliRetriever:
             doc_id, page_id = self.store.page_ids[idx]
             
             hit = RetrieveHit(
+                unit_id=f"{doc_id}_p{page_id:04d}",  # Page-level unit ID
                 doc_id=doc_id,
                 page_id=page_id,
                 block_id=None,  # Page-level retrieval
                 text="",  # No text available in vision retrieval
                 score=score,
+                source="colpali",
                 metadata={
-                    "source": "colpali",
                     "coarse_rank": int(list(indices[0]).index(idx)) + 1
                 }
             )
             hits.append(hit)
         
+        # Return appropriate type
+        if return_result:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return RetrievalResult(
+                query_id=query_id,
+                hits=hits,
+                elapsed_ms=elapsed_ms
+            )
         return hits

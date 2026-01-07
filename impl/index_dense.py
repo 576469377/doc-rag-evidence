@@ -2,10 +2,13 @@
 Dense text embedding indexer and retriever using FAISS.
 Supports embedding via vLLM/SGLang-served models (OpenAI-compatible API).
 """
-from typing import List, Optional, Protocol
+from typing import List, Optional, Protocol, Union, TYPE_CHECKING
 from pathlib import Path
 import json
 import numpy as np
+
+if TYPE_CHECKING:
+    from core.schemas import QueryInput, AppConfig, RetrievalResult
 
 try:
     import faiss
@@ -441,26 +444,48 @@ class DenseIndexerRetriever:
     
     def retrieve(
         self,
-        query: str,
-        top_k: int = 10,
+        query: Union[str, 'QueryInput'],
+        config: Optional['AppConfig'] = None,
+        top_k: Optional[int] = None,
         score_threshold: Optional[float] = None
-    ) -> List[RetrieveHit]:
+    ) -> Union[List[RetrieveHit], 'RetrievalResult']:
         """
         Retrieve top-k most similar units to query.
         
         Args:
-            query: Query string
-            top_k: Number of results to return
+            query: Query string or QueryInput object
+            config: AppConfig (optional, for compatibility with Pipeline)
+            top_k: Number of results to return (defaults to config.top_k_retrieve)
             score_threshold: Optional minimum similarity threshold
             
         Returns:
-            List of RetrieveHit objects sorted by similarity (descending)
+            List of RetrieveHit objects (if query is str) or RetrievalResult (if QueryInput)
         """
+        import time
+        from core.schemas import QueryInput, RetrievalResult
+        
+        # Handle QueryInput vs string
+        if isinstance(query, QueryInput):
+            query_str = query.question
+            query_id = query.query_id
+            return_result = True
+            if config:
+                top_k = top_k or config.top_k_retrieve
+        else:
+            query_str = query
+            query_id = None
+            return_result = False
+        
+        top_k = top_k or 10
+        start_time = time.time()
+        
         if self.index is None or not self.units:
+            if return_result:
+                return RetrievalResult(query_id=query_id, hits=[], elapsed_ms=0)
             return []
         
         # Embed query
-        query_embedding = self.embedder.embed_query(query)
+        query_embedding = self.embedder.embed_query(query_str)
         query_embedding = query_embedding.reshape(1, -1)
         
         # Search index (returns L2 distances)
@@ -482,16 +507,25 @@ class DenseIndexerRetriever:
             
             unit = self.units[idx]
             hit = RetrieveHit(
+                unit_id=unit.unit_id,
                 doc_id=unit.doc_id,
                 page_id=unit.page_id,
                 block_id=unit.block_id,
                 text=unit.text,
                 score=float(sim),
+                source="dense",
                 metadata={
-                    "source": "dense",
                     "distance": float(distances[0][list(indices[0]).index(idx)])
                 }
             )
             hits.append(hit)
         
+        # Return appropriate type
+        if return_result:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return RetrievalResult(
+                query_id=query_id,
+                hits=hits,
+                elapsed_ms=elapsed_ms
+            )
         return hits

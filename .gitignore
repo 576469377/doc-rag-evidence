@@ -8,3 +8,4 @@ __pycache__/
 .env.*
 .ipynb_checkpoints/
 .DS_Store
+/backup_old_files_20260107_033516
