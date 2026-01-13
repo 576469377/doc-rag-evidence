@@ -168,7 +168,6 @@ def build_colpali_index(config: AppConfig, store: DocumentStoreLocal, index_name
 
 
 def main():
-def main():
     parser = argparse.ArgumentParser(description="Build indices from ingested documents")
     parser.add_argument(
         "--config",

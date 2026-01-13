@@ -89,9 +89,24 @@ class VLLMEmbedder:
         """Call vLLM embedding API."""
         url = f"{self.endpoint}/v1/embeddings"
         
+        # 预处理文本：过滤空文本，截断超长文本
+        processed_texts = []
+        for text in texts:
+            # 去除首尾空白
+            text = text.strip() if text else ""
+            # 如果为空，使用占位符
+            if not text:
+                text = "[empty]"
+            # 截断到约450个token（保守估计，1 token ≈ 1.3 chars中文）
+            # max_model_len=512，留一些余量
+            max_chars = 600  # 约450 tokens
+            if len(text) > max_chars:
+                text = text[:max_chars]
+            processed_texts.append(text)
+        
         payload = {
             "model": self.model,
-            "input": texts,
+            "input": processed_texts,
             "encoding_format": "float"
         }
         

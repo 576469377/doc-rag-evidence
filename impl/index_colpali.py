@@ -181,6 +181,45 @@ class ColPaliRetriever:
         
         return query_vecs
     
+    @torch.no_grad()
+    def _embed_images_batch(self, image_paths: List[str], batch_size: int = 16) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """
+        批量embed图像，提升索引构建速度。
+        
+        Args:
+            image_paths: 图像路径列表
+            batch_size: 批处理大小（默认16，24GB显存可支持）
+        
+        Returns:
+            List of (global_vec, patch_vecs) tuples
+        """
+        results = []
+        
+        for i in range(0, len(image_paths), batch_size):
+            batch_paths = image_paths[i:i+batch_size]
+            
+            # Load images
+            images = [Image.open(path).convert('RGB') for path in batch_paths]
+            
+            # Batch process
+            features = self.processor.process_images(images=images)
+            features = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v 
+                       for k, v in features.items()}
+            
+            # Get embeddings
+            outputs = self.model(**features)
+            
+            # Extract embeddings for each image in batch
+            # Shape: [batch_size, num_patches, embed_dim]
+            embeddings = outputs.embeddings.cpu().float().numpy()
+            
+            for j in range(len(batch_paths)):
+                patch_vecs = embeddings[j]  # [num_patches, embed_dim]
+                global_vec = patch_vecs.mean(axis=0)  # [embed_dim]
+                results.append((global_vec, patch_vecs))
+        
+        return results
+    
     def build_index(
         self,
         page_data: Union[List[Tuple[str, int]], List[Tuple[str, int, str]]],
@@ -201,37 +240,48 @@ class ColPaliRetriever:
         global_vectors = []
         patch_vectors = []
         
+        # 第一步：收集所有需要处理的图像
+        items_to_process = []  # (doc_id, page_id, image_path)
+        items_cached = []  # (doc_id, page_id, global_vec, patch_vecs)
+        
         for item in page_data:
             if len(item) == 2:
-                # Format: (doc_id, page_id) - need to construct image path
                 doc_id, page_id = item
                 if config is None:
                     raise ValueError("config is required when page_data is (doc_id, page_id) format")
-                # Construct path: data/docs/{doc_id}/pages/{page_id:04d}/page.png
                 image_path = Path(config.docs_dir) / doc_id / "pages" / f"{page_id:04d}" / "page.png"
                 image_path = str(image_path)
             elif len(item) == 3:
-                # Format: (doc_id, page_id, image_path) - backward compatibility
                 doc_id, page_id, image_path = item
             else:
                 raise ValueError(f"Invalid page_data item format: {item}")
             
-            # Check if image exists
             if not Path(image_path).exists():
                 print(f"⚠️  Warning: Image not found: {image_path}")
                 continue
             
-            # Check cache first
+            # Check cache
             cached = self._load_cached_embeddings(doc_id, page_id)
             if cached:
-                global_vec, patch_vecs = cached
+                items_cached.append((doc_id, page_id, cached[0], cached[1]))
             else:
-                # Embed image
-                global_vec, patch_vecs = self._embed_image(image_path)
-                
-                # Save to cache
-                self._save_cached_embeddings(doc_id, page_id, global_vec, patch_vecs)
+                items_to_process.append((doc_id, page_id, image_path))
+        
+        # 第二步：批量处理未缓存的图像（并行加速）
+        if items_to_process:
+            print(f"⏳ 批量处理 {len(items_to_process)} 个图像（batch_size=16）...")
+            image_paths = [item[2] for item in items_to_process]
+            embeddings = self._embed_images_batch(image_paths, batch_size=16)
             
+            # Save to cache and collect
+            for (doc_id, page_id, _), (global_vec, patch_vecs) in zip(items_to_process, embeddings):
+                self._save_cached_embeddings(doc_id, page_id, global_vec, patch_vecs)
+                page_ids.append((doc_id, page_id))
+                global_vectors.append(global_vec)
+                patch_vectors.append(patch_vecs)
+        
+        # 第三步：添加缓存的数据
+        for doc_id, page_id, global_vec, patch_vecs in items_cached:
             page_ids.append((doc_id, page_id))
             global_vectors.append(global_vec)
             patch_vectors.append(patch_vecs)
@@ -258,6 +308,107 @@ class ColPaliRetriever:
         )
         
         print(f"ColPali index built with {len(page_ids)} pages")
+    
+    def add_pages(
+        self,
+        page_data: Union[List[Tuple[str, int]], List[Tuple[str, int, str]]],
+        config: Optional[AppConfig] = None
+    ):
+        """
+        Add new pages to existing index (incremental update).
+        
+        Args:
+            page_data: List of (doc_id, page_id) or (doc_id, page_id, image_path) tuples
+            config: AppConfig (required if using (doc_id, page_id) format)
+        """
+        if self.index is None or self.store is None:
+            # No existing index, just build from scratch
+            return self.build_index(page_data, config)
+        
+        print(f"Adding {len(page_data)} new pages to ColPali index...")
+        
+        new_page_ids = []
+        new_global_vectors = []
+        new_patch_vectors = []
+        
+        # 收集需要处理的图像（与build_index相同的批量处理逻辑）
+        items_to_process = []  # (doc_id, page_id, image_path)
+        items_cached = []  # (doc_id, page_id, global_vec, patch_vecs)
+        
+        for item in page_data:
+            if len(item) == 2:
+                doc_id, page_id = item
+                if config is None:
+                    raise ValueError("config is required when page_data is (doc_id, page_id) format")
+                image_path = Path(config.docs_dir) / doc_id / "pages" / f"{page_id:04d}" / "page.png"
+                image_path = str(image_path)
+            elif len(item) == 3:
+                doc_id, page_id, image_path = item
+            else:
+                raise ValueError(f"Invalid page_data item format: {item}")
+            
+            # Skip if already in index
+            if (doc_id, page_id) in self.store.page_ids:
+                print(f"  ⏭️  Skipping {doc_id} page {page_id} (already indexed)")
+                continue
+            
+            # Check if image exists
+            if not Path(image_path).exists():
+                print(f"⚠️  Warning: Image not found: {image_path}")
+                continue
+            
+            # Check cache
+            cached = self._load_cached_embeddings(doc_id, page_id)
+            if cached:
+                items_cached.append((doc_id, page_id, cached[0], cached[1]))
+            else:
+                items_to_process.append((doc_id, page_id, image_path))
+        
+        # 批量处理未缓存的图像
+        if items_to_process:
+            print(f"⏳ 批量处理 {len(items_to_process)} 个新图像（batch_size=16）...")
+            image_paths = [item[2] for item in items_to_process]
+            embeddings = self._embed_images_batch(image_paths, batch_size=16)
+            
+            # Save to cache and collect
+            for (doc_id, page_id, _), (global_vec, patch_vecs) in zip(items_to_process, embeddings):
+                self._save_cached_embeddings(doc_id, page_id, global_vec, patch_vecs)
+                new_page_ids.append((doc_id, page_id))
+                new_global_vectors.append(global_vec)
+                new_patch_vectors.append(patch_vecs)
+        
+        # 添加缓存的数据
+        for doc_id, page_id, global_vec, patch_vecs in items_cached:
+            new_page_ids.append((doc_id, page_id))
+            new_global_vectors.append(global_vec)
+            new_patch_vectors.append(patch_vecs)
+        
+        if not new_page_ids:
+            print("No new pages to add (all already indexed or invalid)")
+            return
+        
+        # Stack new global vectors
+        new_global_vectors_array = np.stack(new_global_vectors).astype(np.float32)
+        
+        # Normalize and add to FAISS index
+        faiss.normalize_L2(new_global_vectors_array)
+        self.index.add(new_global_vectors_array)
+        
+        # Merge with existing store
+        combined_page_ids = self.store.page_ids + new_page_ids
+        combined_global_vectors = np.vstack([
+            self.store.global_vectors,
+            new_global_vectors_array
+        ])
+        combined_patch_vectors = self.store.patch_vectors + new_patch_vectors
+        
+        self.store = PageVectorStore(
+            page_ids=combined_page_ids,
+            global_vectors=combined_global_vectors,
+            patch_vectors=combined_patch_vectors
+        )
+        
+        print(f"✅ Added {len(new_page_ids)} pages. Total: {len(self.store.page_ids)} pages")
     
     def save(self, index_dir: Path):
         """Save index to disk (alias for persist)."""
@@ -289,22 +440,18 @@ class ColPaliRetriever:
         
         print(f"ColPali index saved to {index_dir}")
     
-    @classmethod
-    def load(
-        cls,
-        index_dir: Path,
-        model_name: str,
-        device: str = "cuda:0"
-    ) -> 'ColPaliRetriever':
-        """Load index from disk."""
-        index_dir = Path(index_dir)
+    def load_instance(self, index_dir: Path):
+        """
+        Load index from disk (instance method).
         
-        # Create retriever
-        retriever = cls(model_name=model_name, device=device)
+        Args:
+            index_dir: Directory containing the saved index
+        """
+        index_dir = Path(index_dir)
         
         # Load FAISS index
         index_path = index_dir / "colpali_global.faiss"
-        retriever.index = faiss.read_index(str(index_path))
+        self.index = faiss.read_index(str(index_path))
         
         # Load page IDs
         page_ids_path = index_dir / "colpali_page_ids.json"
@@ -312,19 +459,57 @@ class ColPaliRetriever:
             page_ids_data = json.load(f)
         page_ids = [(item["doc_id"], item["page_id"]) for item in page_ids_data]
         
+        # Load global vectors (needed for incremental updates)
+        # For Flat index, we can reconstruct vectors
+        num_vectors = self.index.ntotal
+        if num_vectors > 0:
+            # Reconstruct all vectors from FAISS index
+            global_vectors = np.zeros((num_vectors, self.index.d), dtype=np.float32)
+            for i in range(num_vectors):
+                global_vectors[i] = self.index.reconstruct(i)
+        else:
+            global_vectors = np.array([]).reshape(0, self.index.d)
+        
         # Load patch vectors
         patch_vecs_path = index_dir / "colpali_patch_vectors.npz"
         patch_data = np.load(patch_vecs_path)
         patch_vectors = [patch_data[f"page_{i}"] for i in range(len(page_ids))]
         
         # Reconstruct store
-        retriever.store = PageVectorStore(
+        self.store = PageVectorStore(
             page_ids=page_ids,
-            global_vectors=None,  # Not needed for retrieval
+            global_vectors=global_vectors,
             patch_vectors=patch_vectors
         )
         
         print(f"Loaded ColPali index with {len(page_ids)} pages")
+    
+    @classmethod
+    def load(
+        cls,
+        index_dir: Path,
+        model_name: str,
+        device: str = "cuda:0"
+    ) -> 'ColPaliRetriever':
+        """
+        Load index from disk (class method for compatibility).
+        
+        Args:
+            index_dir: Directory containing the saved index
+            model_name: ColPali model name/path
+            device: Device to load model on
+            
+        Returns:
+            ColPaliRetriever instance with loaded index
+        """
+        index_dir = Path(index_dir)
+        
+        # Create retriever
+        retriever = cls(model_name=model_name, device=device)
+        
+        # Load index using instance method
+        retriever.load_instance(index_dir)
+        
         return retriever
     
     def _late_interaction_score(
@@ -371,6 +556,63 @@ class ColPaliRetriever:
         score = max_sims.mean()
         
         return float(score)
+    
+    def _batch_late_interaction_score(
+        self,
+        query_vecs: np.ndarray,
+        page_indices: List[int]
+    ) -> np.ndarray:
+        """
+        Batch compute late interaction scores for multiple pages (optimized & parallelized).
+        
+        Uses vectorized NumPy operations and multiprocessing for speed.
+        
+        Args:
+            query_vecs: Query embeddings, shape (num_query_tokens, embed_dim)
+            page_indices: List of page indices to score
+            
+        Returns:
+            Array of scores for each page
+        """
+        # Normalize query vectors once
+        query_vecs_norm = query_vecs / (np.linalg.norm(query_vecs, axis=1, keepdims=True) + 1e-8)
+        
+        scores = np.zeros(len(page_indices), dtype=np.float32)
+        
+        # Use ThreadPoolExecutor for parallel computation
+        from concurrent.futures import ThreadPoolExecutor
+        import os
+        
+        def compute_score(args):
+            """Compute score for a single page."""
+            idx, page_idx = args
+            page_patch_vecs = self.store.patch_vectors[page_idx]
+            
+            # Normalize page patches
+            page_patch_vecs_norm = page_patch_vecs / (
+                np.linalg.norm(page_patch_vecs, axis=1, keepdims=True) + 1e-8
+            )
+            
+            # Compute similarity matrix: (num_query_tokens, num_patches)
+            sim_matrix = query_vecs_norm @ page_patch_vecs_norm.T
+            
+            # MaxSim: for each query token, take max over page patches
+            max_sims = sim_matrix.max(axis=1)
+            
+            # Average over query tokens
+            return idx, max_sims.mean()
+        
+        # Determine number of workers (use available CPUs, but cap at 8 to avoid overhead)
+        num_workers = min(8, len(page_indices), os.cpu_count() or 4)
+        
+        # Parallel computation
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            results = executor.map(compute_score, enumerate(page_indices))
+            
+            for idx, score in results:
+                scores[idx] = score
+        
+        return scores
     
     def retrieve(
         self,
@@ -429,23 +671,29 @@ class ColPaliRetriever:
         
         distances, indices = self.index.search(global_query_vec, coarse_k)
         
-        # Stage 2: Late interaction scoring
-        scores = []
-        for idx in indices[0]:
-            if idx < 0 or idx >= len(self.store.page_ids):
-                continue
-            
-            page_patch_vecs = self.store.patch_vectors[idx]
-            score = self._late_interaction_score(query_vecs, page_patch_vecs)
-            scores.append((idx, score))
+        # Stage 2: Late interaction scoring (batch processing for speed)
+        # Filter valid indices
+        valid_indices = [idx for idx in indices[0] if 0 <= idx < len(self.store.page_ids)]
+        
+        if len(valid_indices) == 0:
+            if return_result:
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                return RetrievalResult(query_id=query_id, hits=[], elapsed_ms=elapsed_ms)
+            return []
+        
+        # Batch compute scores using vectorized operations
+        scores = self._batch_late_interaction_score(query_vecs, valid_indices)
+        
+        # Combine indices with scores
+        idx_score_pairs = list(zip(valid_indices, scores))
         
         # Sort by score and take top-k
-        scores.sort(key=lambda x: x[1], reverse=True)
-        scores = scores[:top_k]
+        idx_score_pairs.sort(key=lambda x: x[1], reverse=True)
+        idx_score_pairs = idx_score_pairs[:top_k]
         
         # Build results
         hits = []
-        for idx, score in scores:
+        for idx, score in idx_score_pairs:
             doc_id, page_id = self.store.page_ids[idx]
             
             hit = RetrieveHit(

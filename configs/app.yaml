@@ -26,10 +26,25 @@ citation_level: "block"
 bbox_mode: "none"
 
 # ===== Model Configuration =====
-# V0 uses stub implementations for offline demo
-embedder_name: "stub-embedder"      # For future vector retrieval
-reranker_name: "none"               # No reranking in V0
-llm_name: "stub-llm"                # Template-based generator
+# V1.1: Real LLM for generation
+generator:
+  type: "qwen3_vl"        # template | qwen3_vl (使用qwen3_vl启用真实LLM生成)
+  
+# LLM Configuration (V1.1+)
+llm:
+  backend: "vllm"         # transformers | vllm | sglang
+  model: "Qwen/Qwen3-VL-4B-Instruct"  # Model name for API (multimodal)
+  model_path: "/workspace/cache/Qwen3-VL-4B-Instruct"  # Local model path
+  endpoint: "http://localhost:8002"  # vLLM generation server
+  max_new_tokens: 1024
+  temperature: 0.1
+  top_p: 0.9
+  citation_policy: "strict"  # strict | relaxed | none
+
+# Legacy names (keep for compatibility)
+embedder_name: "vllm-embedder"
+reranker_name: "none"
+llm_name: "qwen3-vl"
 
 # ===== OCR Configuration (V0.1+) =====
 ocr:

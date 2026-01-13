@@ -182,7 +182,7 @@ class SGLangOcrClient:
                 }
             ],
             "temperature": 0.0,
-            "max_tokens": 4096
+            "max_tokens": 2048  # Leave room for input tokens (model max_len=4096)
         }
         
         # Add extra_body for vllm (optional, won't break SGLang)

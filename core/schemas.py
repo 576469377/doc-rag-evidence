@@ -33,6 +33,22 @@ class AppConfig(BaseModel):
     embedder_name: str = Field(default="stub-embedder")
     reranker_name: str = Field(default="none")
     llm_name: str = Field(default="stub-llm")
+    
+    # V1.1+: Generator and LLM configuration
+    generator: Dict[str, Any] = Field(default_factory=lambda: {
+        "type": "template"  # template | qwen3_vl
+    })
+    
+    llm: Dict[str, Any] = Field(default_factory=lambda: {
+        "backend": "transformers",  # transformers | vllm | sglang
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "model_path": None,
+        "endpoint": "http://localhost:8002",
+        "max_new_tokens": 1024,
+        "temperature": 0.1,
+        "top_p": 0.9,
+        "citation_policy": "strict"  # strict | relaxed | none
+    })
 
     # Safety / behavior
     max_context_chars: int = Field(default=12000, description="Hard cap for context assembly")

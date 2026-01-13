@@ -24,6 +24,7 @@ from core.pipeline import Pipeline
 from infra.store_local import DocumentStoreLocal
 from infra.runlog_local import RunLoggerLocal
 from impl.ingest_pdf_v1 import PDFIngestorV1
+from impl.index_incremental import IncrementalIndexManager
 from impl.index_bm25 import BM25IndexerRetriever
 from impl.index_dense import DenseIndexerRetriever, VLLMEmbedder
 from impl.index_colpali import ColPaliRetriever
@@ -51,9 +52,24 @@ class DocRAGUIV1:
         
         # Initialize other components
         self.selector = TopKEvidenceSelector(snippet_length=500)
-        self.generator = TemplateGenerator(mode="summary")
         
-        # Create pipeline (default retriever)
+        # Initialize generator based on config
+        generator_type = self.config.generator.get("type", "template")
+        if generator_type == "qwen3_vl":
+            try:
+                from impl.generator_qwen_llm import QwenLLMGenerator
+                self.generator = QwenLLMGenerator(self.config)
+                print(f"✅ Using QwenLLMGenerator")
+            except Exception as e:
+                print(f"⚠️  Failed to load QwenLLMGenerator: {e}, falling back to template")
+                from impl.generator_template import TemplateGenerator
+                self.generator = TemplateGenerator(mode="summary")
+        else:
+            from impl.generator_template import TemplateGenerator
+            self.generator = TemplateGenerator(mode="summary")
+            print(f"✅ Using TemplateGenerator")
+        
+        # Create pipeline (default retriever) with store for hit normalization
         default_retriever = self.retrievers.get(self.config.retrieval_mode)
         if not default_retriever:
             default_retriever = self.retrievers.get("bm25")
@@ -63,7 +79,8 @@ class DocRAGUIV1:
             selector=self.selector,
             generator=self.generator,
             logger=self.logger,
-            reranker=None
+            reranker=None,
+            store=self.store  # Enable hit normalization
         )
         
         # Eval runner
@@ -107,26 +124,45 @@ class DocRAGUIV1:
             else:
                 print(f"⚠️  Dense index not found at {dense_index_dir}")
         
-        # ColPali (vision embedding on GPU 2)
+        # ColPali (vision embedding on GPU 2) - 延迟加载，只记录配置
         if self.config.colpali.get("enabled"):
             colpali_index_name = "colpali_default"
             colpali_index_dir = indices_dir / colpali_index_name
             if colpali_index_dir.exists():
-                try:
-                    device = self.config.colpali.get("device", "cuda:2")
-                    retriever = ColPaliRetriever.load(
-                        colpali_index_dir,
-                        model_name=self.config.colpali["model"],
-                        device=device
-                    )
-                    self.retrievers["colpali"] = retriever
-                    print(f"✅ Loaded ColPali index (device={device})")
-                except Exception as e:
-                    print(f"❌ Failed to load ColPali index: {e}")
-                    import traceback
-                    traceback.print_exc()
+                # 不立即加载模型，只注册可用性
+                self.retrievers["colpali"] = None  # Placeholder，延迟加载
+                self._colpali_config = {
+                    "index_dir": colpali_index_dir,
+                    "model_name": self.config.colpali["model"],
+                    "device": self.config.colpali.get("device", "cuda:2")
+                }
+                print(f"✅ ColPali index available (延迟加载模式)")
             else:
                 print(f"⚠️  ColPali index not found at {colpali_index_dir}")
+        
+        # Initialize hybrid retrievers if multiple methods available
+        self._init_hybrid_retrievers()
+
+    def _init_hybrid_retrievers(self):
+        """Initialize hybrid retrieval combinations."""
+        available = [k for k, v in self.retrievers.items() if v is not None or k == "colpali"]
+        
+        # Dense + ColPali hybrid
+        if "dense" in available and "colpali" in available:
+            from impl.retriever_hybrid import HybridRetriever
+            # Placeholder for lazy initialization
+            self.retrievers["hybrid_dense_colpali"] = "lazy"
+            print(f"✅ Hybrid (Dense+ColPali) available (延迟加载)")
+        
+        # BM25 + Dense hybrid  
+        if "bm25" in available and "dense" in available:
+            from impl.retriever_hybrid import HybridRetriever
+            self.retrievers["hybrid_bm25_dense"] = HybridRetriever(
+                retrievers={"bm25": self.retrievers["bm25"], "dense": self.retrievers["dense"]},
+                weights={"bm25": 0.4, "dense": 0.6},
+                fusion_method="weighted_sum"
+            )
+            print(f"✅ Hybrid (BM25+Dense) initialized")
 
     def launch(self, share: bool = False):
         """Launch Gradio UI."""
@@ -150,7 +186,24 @@ class DocRAGUIV1:
                 with gr.Tab("📊 Evaluation"):
                     self._build_eval_tab()
 
-        demo.launch(share=share, server_name="0.0.0.0", server_port=7860)
+        try:
+            demo.launch(
+                share=share, 
+                server_name="127.0.0.1",  # Changed from 0.0.0.0 to fix 502 error
+                server_port=7860,
+                show_error=True,
+                quiet=False
+            )
+        except Exception as e:
+            print(f"❌ Failed to launch Gradio: {e}")
+            # Try alternative port
+            print("⚠️  Trying alternative port 7861...")
+            demo.launch(
+                share=share,
+                server_name="127.0.0.1",
+                server_port=7861,
+                show_error=True
+            )
 
     def _build_document_tab(self):
         """Build document management tab."""
@@ -159,11 +212,16 @@ class DocRAGUIV1:
         # Section 1: Upload & Ingest
         with gr.Row():
             with gr.Column():
-                gr.Markdown("### 📤 Upload PDF")
-                pdf_file = gr.File(label="Upload PDF", file_types=[".pdf"])
+                gr.Markdown("### 📤 Upload PDF (Supports Multiple Files)")
+                pdf_files = gr.File(
+                    label="Upload PDF(s)", 
+                    file_types=[".pdf"],
+                    file_count="multiple",
+                    type="filepath"
+                )
                 use_ocr = gr.Checkbox(label="Use OCR (slower, better quality)", value=False)
-                upload_btn = gr.Button("📤 Ingest Document", variant="primary")
-                upload_status = gr.Textbox(label="Ingestion Status", lines=3, interactive=False)
+                upload_btn = gr.Button("📤 Ingest Document(s)", variant="primary")
+                upload_status = gr.Textbox(label="Ingestion Status", lines=8, interactive=False)
 
             with gr.Column():
                 gr.Markdown("### 📚 Document List")
@@ -205,8 +263,8 @@ class DocRAGUIV1:
 
         # Event handlers
         upload_btn.click(
-            fn=self._handle_upload,
-            inputs=[pdf_file, use_ocr],
+            fn=self._handle_batch_upload,
+            inputs=[pdf_files, use_ocr],
             outputs=[upload_status, doc_list]
         )
 
@@ -260,6 +318,14 @@ class DocRAGUIV1:
                     lines=8,
                     interactive=False
                 )
+        
+        # Evidence format selector (outside columns for better visibility)
+        evidence_mode = gr.Radio(
+            choices=["text", "image"],
+            value="text",
+            label="Evidence Format",
+            info="text: 使用文本snippet | image: 使用完整页面图片（更准确，适合VL模型）"
+        )
 
         gr.Markdown("### 📑 Evidence")
         evidence_display = gr.Dataframe(
@@ -273,7 +339,7 @@ class DocRAGUIV1:
         # Event handler
         query_btn.click(
             fn=self._handle_query,
-            inputs=[question, doc_filter, retrieval_mode],
+            inputs=[question, doc_filter, retrieval_mode, evidence_mode],
             outputs=[answer_box, evidence_display, query_id_box]
         )
 
@@ -306,38 +372,75 @@ class DocRAGUIV1:
 
     # ========== Event Handlers ==========
 
-    def _handle_upload(self, pdf_file, use_ocr: bool) -> Tuple[str, List]:
-        """Handle PDF upload and ingestion."""
+    def _handle_batch_upload(self, pdf_files, use_ocr: bool) -> Tuple[str, List]:
+        """Handle batch PDF upload and ingestion."""
         try:
-            if pdf_file is None:
-                return "❌ Error: No file uploaded", self._get_doc_list()
-
-            # Ingest with V1 ingestor
-            ingestor = PDFIngestorV1(
-                config=self.config,
-                store=self.store,
-                use_ocr=use_ocr
-            )
+            if pdf_files is None or len(pdf_files) == 0:
+                return "❌ Error: No files uploaded", self._get_doc_list()
             
-            status_msg = f"⏳ Ingesting: {Path(pdf_file.name).name}\n"
+            # Handle single file or multiple files
+            if not isinstance(pdf_files, list):
+                pdf_files = [pdf_files]
+            
+            total_files = len(pdf_files)
+            status_lines = []
+            status_lines.append(f"📦 Batch Upload: {total_files} file(s)")
+            status_lines.append("=" * 50)
+            
             if use_ocr:
-                status_msg += "OCR enabled - this may take 10-30 seconds per page...\n"
+                status_lines.append("⚙️ OCR enabled - processing may take time...")
+            status_lines.append("")
             
-            meta = ingestor.ingest(pdf_file.name)
+            # Process each file
+            success_count = 0
+            failed_count = 0
+            ingested_docs = []
             
-            status = f"✅ Ingested Successfully!\n"
-            status += f"Document ID: {meta.doc_id}\n"
-            status += f"Title: {meta.title}\n"
-            status += f"Pages: {meta.page_count}\n"
-            status += f"OCR: {'✓ enabled' if use_ocr else '✗ disabled'}\n\n"
-            status += "⚠️ Next Step: Build indices below to enable retrieval"
+            for idx, pdf_file in enumerate(pdf_files, 1):
+                try:
+                    filename = Path(pdf_file.name).name
+                    status_lines.append(f"[{idx}/{total_files}] Processing: {filename}")
+                    
+                    # Ingest with V1 ingestor
+                    ingestor = PDFIngestorV1(
+                        config=self.config,
+                        store=self.store,
+                        use_ocr=use_ocr
+                    )
+                    
+                    meta = ingestor.ingest(pdf_file.name)
+                    
+                    status_lines.append(f"  ✅ Success: {meta.doc_id} ({meta.page_count} pages)")
+                    ingested_docs.append(meta.doc_id)
+                    success_count += 1
+                    
+                except Exception as e:
+                    status_lines.append(f"  ❌ Failed: {str(e)}")
+                    failed_count += 1
+                
+                status_lines.append("")  # Blank line between files
             
-            return status, self._get_doc_list()
+            # Summary
+            status_lines.append("=" * 50)
+            status_lines.append(f"📊 Summary:")
+            status_lines.append(f"  ✅ Success: {success_count}/{total_files}")
+            status_lines.append(f"  ❌ Failed: {failed_count}/{total_files}")
+            
+            if success_count > 0:
+                status_lines.append(f"\n  Ingested IDs: {', '.join(ingested_docs)}")
+                status_lines.append("\n⚠️ Next Step: Build indices below to enable retrieval")
+            
+            return "\n".join(status_lines), self._get_doc_list()
             
         except Exception as e:
             import traceback
-            error_msg = f"❌ Error: {str(e)}\n\nDetails:\n{traceback.format_exc()}"
+            error_msg = f"❌ Batch Upload Error: {str(e)}\n\nDetails:\n{traceback.format_exc()}"
             return error_msg, self._get_doc_list()
+    
+    def _handle_upload(self, pdf_file, use_ocr: bool) -> Tuple[str, List]:
+        """Handle single PDF upload (legacy, kept for compatibility)."""
+        # Redirect to batch handler
+        return self._handle_batch_upload([pdf_file] if pdf_file else None, use_ocr)
 
     def _handle_build_indices(
         self,
@@ -346,12 +449,12 @@ class DocRAGUIV1:
         build_colpali: bool,
         index_name_suffix: str
     ) -> str:
-        """Handle index building."""
+        """Handle index building (now with incremental updates)."""
         try:
             if not any([build_bm25, build_dense, build_colpali]):
                 return "❌ Error: Please select at least one index type to build"
-            
-            status = "🔧 Building Indices...\n\n"
+
+            status = "🔧 Building/Updating Indices (Incremental Mode)...\n\n"
             suffix = index_name_suffix.strip() or "default"
             
             # Get all documents
@@ -359,152 +462,129 @@ class DocRAGUIV1:
             if not docs:
                 return "❌ Error: No documents found. Please ingest documents first."
             
-            status += f"📚 Found {len(docs)} document(s)\n\n"
+            status += f"📚 Found {len(docs)} document(s)\n"
             
-            # Collect all index units
-            from core.schemas import IndexUnit
-            all_units = []
+            # Initialize incremental index manager
+            index_manager = IncrementalIndexManager(self.config, self.store)
             
-            for meta in docs:
-                # Get pages
-                pages = self.store.list_pages(meta.doc_id)
-                for page_meta in pages:
-                    # Get blocks
-                    blocks = self.store.load_blocks(meta.doc_id, page_meta.page_id)
-                    
-                    if blocks:
-                        # Use blocks if available
-                        for block in blocks:
-                            unit = IndexUnit(
-                                unit_id=f"{meta.doc_id}_p{page_meta.page_id:04d}_{block.block_id}",
-                                doc_id=meta.doc_id,
-                                page_id=page_meta.page_id,
-                                block_id=block.block_id,
-                                text=block.text
-                            )
-                            all_units.append(unit)
-                    else:
-                        # Fallback: use page text as single unit
-                        artifact = self.store.load_page_artifact(meta.doc_id, page_meta.page_id)
-                        if artifact and artifact.text and artifact.text.text.strip():
-                            unit = IndexUnit(
-                                unit_id=f"{meta.doc_id}_p{page_meta.page_id:04d}",
-                                doc_id=meta.doc_id,
-                                page_id=page_meta.page_id,
-                                block_id=None,
-                                text=artifact.text.text
-                            )
-                            all_units.append(unit)
-            
-            status += f"📦 Collected {len(all_units)} index units\n\n"
-            
-            # Check if we have any units
-            if len(all_units) == 0:
-                return (status + 
-                    "❌ Error: No index units found (documents have no text)\n\n"
-                    "Possible causes:\n"
-                    "  • Documents were imported without OCR\n"
-                    "  • OCR service was not running during import\n"
-                    "  • OCR service returned errors (check logs)\n\n"
-                    "Solutions:\n"
-                    "  1. Delete existing documents\n"
-                    "  2. Make sure OCR service is running: curl http://localhost:8000/health\n"
-                    "  3. Re-upload PDFs with 'Use OCR' enabled\n"
-                )
-            
-            # Build BM25
+            # BM25 incremental build/update
             if build_bm25:
-                status += "⏳ Building BM25 index...\n"
+                status += "\n" + "─" * 50 + "\n"
+                status += "⏳ BM25 Index Update\n"
+                status += "─" * 50 + "\n"
                 try:
-                    retriever = BM25IndexerRetriever(self.store)
-                    retriever.build_index(all_units, self.config)
-                    index_name = f"bm25_{suffix}"
-                    retriever.persist(self.config, index_name=index_name)
-                    
-                    # Reload
-                    self.retrievers["bm25"] = retriever
-                    status += f"✅ BM25 index built: {index_name} ({len(all_units)} units)\n\n"
-                except Exception as e:
-                    status += f"❌ BM25 build failed: {str(e)}\n\n"
-            
-            # Build Dense
-            if build_dense:
-                status += "⏳ Building Dense index...\n"
-                try:
-                    embedder = VLLMEmbedder(
-                        endpoint=self.config.dense["endpoint"],
-                        model=self.config.dense["model"],
-                        batch_size=self.config.dense.get("batch_size", 32)
-                    )
-                    retriever = DenseIndexerRetriever(
-                        embedder=embedder,
-                        index_type=self.config.dense.get("index_type", "Flat"),
-                        nlist=self.config.dense.get("nlist", 100),
-                        nprobe=self.config.dense.get("nprobe", 10)
-                    )
-                    retriever.build_index(all_units, self.config)
-                    
-                    index_dir = Path(self.config.indices_dir) / f"dense_{suffix}"
-                    index_dir.mkdir(parents=True, exist_ok=True)
-                    retriever.save(index_dir)
-                    
-                    # Reload
-                    self.retrievers["dense"] = retriever
-                    status += f"✅ Dense index built: dense_{suffix} ({len(all_units)} units)\n"
-                    status += f"   vLLM endpoint: {self.config.dense['endpoint']}\n\n"
-                except Exception as e:
-                    import traceback
-                    status += f"❌ Dense build failed: {str(e)}\n"
-                    status += f"   {traceback.format_exc()}\n"
-                    status += "   Make sure vLLM embedding server is running on port 8001\n\n"
-            
-            # Build ColPali
-            if build_colpali:
-                status += "⏳ Building ColPali index (this may take several minutes)...\n"
-                try:
-                    device = self.config.colpali.get("device", "cuda:2")
-                    retriever = ColPaliRetriever(
-                        model_name=self.config.colpali["model"],
-                        device=device,
-                        max_global_pool_pages=self.config.colpali.get("max_global_pool", 100)
+                    result = index_manager.update_bm25_index(
+                        index_name=f"bm25_{suffix}"
                     )
                     
-                    # Build page list (doc_id, page_id) tuples
-                    page_list = []
-                    for meta in docs:
-                        for page_id in range(meta.page_count):
-                            page_list.append((meta.doc_id, page_id))
-                    
-                    if not page_list:
-                        status += "❌ ColPali build failed: No pages found\n\n"
+                    if result["status"] == "success":
+                        # Reload retriever
+                        retriever = BM25IndexerRetriever(self.store)
+                        retriever.load(self.config, index_name=f"bm25_{suffix}")
+                        self.retrievers["bm25"] = retriever
+                        
+                        status += f"✅ Success!\n"
+                        status += f"   New documents: {result['new_docs']}\n"
+                        status += f"   New units: {result['new_units']}\n"
+                        status += f"   Total: {result['total_units']} units from {result['total_docs']} documents\n"
+                    elif result["status"] == "no_update":
+                        status += f"ℹ️  {result['message']}\n"
+                        status += f"   All documents already indexed\n"
                     else:
-                        status += f"   Encoding {len(page_list)} page images on {device}...\n"
-                        retriever.build_index(page_list, self.config)
-                        
-                        index_dir = Path(self.config.indices_dir) / f"colpali_{suffix}"
-                        index_dir.mkdir(parents=True, exist_ok=True)
-                        retriever.save(index_dir)
-                        
-                        # Reload
-                        self.retrievers["colpali"] = retriever
-                        status += f"✅ ColPali index built: colpali_{suffix} ({len(page_list)} pages)\n"
-                        status += f"   Device: {device}\n\n"
+                        status += f"❌ {result['message']}\n"
                 except Exception as e:
                     import traceback
-                    status += f"❌ ColPali build failed: {str(e)}\n"
-                    status += f"   {traceback.format_exc()}\n\n"
+                    status += f"❌ Error: {str(e)}\n"
+                    status += f"{traceback.format_exc()}\n"
             
+            # Dense incremental build/update
+            if build_dense:
+                status += "\n" + "─" * 50 + "\n"
+                status += "⏳ Dense Index Update\n"
+                status += "─" * 50 + "\n"
+                try:
+                    result = index_manager.update_dense_index(
+                        index_name=f"dense_{suffix}"
+                    )
+                    
+                    if result["status"] == "success":
+                        # Reload retriever with updated index
+                        embedder = VLLMEmbedder(
+                            endpoint=self.config.dense["endpoint"],
+                            model=self.config.dense["model"],
+                            batch_size=self.config.dense.get("batch_size", 32)
+                        )
+                        index_dir = Path(self.config.indices_dir) / f"dense_{suffix}"
+                        retriever = DenseIndexerRetriever.load(index_dir, embedder)
+                        self.retrievers["dense"] = retriever
+                        
+                        status += f"✅ Success!\n"
+                        status += f"   New documents: {result['new_docs']}\n"
+                        status += f"   New units: {result['new_units']}\n"
+                        status += f"   Total: {result['total_units']} units\n"
+                        status += f"   vLLM endpoint: {self.config.dense['endpoint']}\n"
+                    elif result["status"] == "no_update":
+                        status += f"ℹ️  {result['message']}\n"
+                        status += f"   All documents already indexed\n"
+                    else:
+                        status += f"❌ {result['message']}\n"
+                except Exception as e:
+                    import traceback
+                    status += f"❌ Error: {str(e)}\n"
+                    status += f"{traceback.format_exc()}\n"
+            
+            # ColPali incremental build/update
+            if build_colpali:
+                status += "\n" + "─" * 50 + "\n"
+                status += "⏳ ColPali Index Update\n"
+                status += "─" * 50 + "\n"
+                try:
+                    result = index_manager.update_colpali_index(
+                        index_name=f"colpali_{suffix}"
+                    )
+                    
+                    if result["status"] == "success":
+                        # Reload retriever
+                        device = self.config.colpali.get("device", "cuda:2")
+                        retriever = ColPaliRetriever(
+                            model_name=self.config.colpali["model"],
+                            device=device,
+                            max_global_pool_pages=self.config.colpali.get("max_global_pool", 100)
+                        )
+                        index_dir = Path(self.config.indices_dir) / f"colpali_{suffix}"
+                        retriever.load_instance(index_dir)
+                        self.retrievers["colpali"] = retriever
+                        
+                        status += f"✅ Success!\n"
+                        status += f"   New documents: {result['new_docs']}\n"
+                        status += f"   New pages: {result['new_pages']}\n"
+                        status += f"   Total: {result['total_pages']} pages\n"
+                        status += f"   Device: {device}\n"
+                    elif result["status"] == "no_update":
+                        status += f"ℹ️  {result['message']}\n"
+                        status += f"   All documents already indexed\n"
+                    else:
+                        status += f"❌ {result['message']}\n"
+                except Exception as e:
+                    import traceback
+                    status += f"❌ Error: {str(e)}\n"
+                    status += f"{traceback.format_exc()}\n"
+            
+            status += "\n" + "=" * 50 + "\n"
+            status += "🎉 Index Building Complete!\n"
             status += "=" * 50 + "\n"
-            status += "🎉 Index building complete!\n"
-            status += f"Available modes: {list(self.retrievers.keys())}\n"
-            status += "\nYou can now use the Query & Answer tab."
+            status += f"\nAvailable retrieval modes: {list(self.retrievers.keys())}\n"
+            status += "\nℹ️  Incremental indexing:\n"
+            status += "   • Only new documents are indexed\n"
+            status += "   • Existing indices are preserved and updated\n"
+            status += "   • No need to rebuild everything when adding docs\n"
+            status += "\nYou can now use the 'Query & Answer' tab.\n"
             
             return status
             
         except Exception as e:
             import traceback
-            error_msg = f"❌ Error: {str(e)}\n\nDetails:\n{traceback.format_exc()}"
-            return error_msg
+            return f"❌ Error: {str(e)}\n\n{traceback.format_exc()}"
 
     def _handle_refresh_docs(self) -> List:
         """Refresh document list."""
@@ -526,19 +606,92 @@ class DocRAGUIV1:
         self,
         question: str,
         doc_filter: str,
-        retrieval_mode: str
+        retrieval_mode: str,
+        evidence_mode: str = "text"
     ) -> Tuple[str, List, str]:
-        """Handle query with selected retrieval mode."""
+        """Handle query with selected retrieval mode and evidence format."""
         try:
             if not question:
                 return "Please enter a question", [], ""
             
-            # Switch retriever
+            # Switch retriever (延迟加载ColPali和Hybrid)
             retriever = self.retrievers.get(retrieval_mode)
+            
+            # 如果是ColPali且还未加载，现在加载
+            if retrieval_mode == "colpali" and retriever is None:
+                if hasattr(self, "_colpali_config"):
+                    try:
+                        print(f"⏳ 首次使用ColPali，正在加载模型...")
+                        retriever = ColPaliRetriever.load(
+                            self._colpali_config["index_dir"],
+                            model_name=self._colpali_config["model_name"],
+                            device=self._colpali_config["device"]
+                        )
+                        self.retrievers["colpali"] = retriever
+                        print(f"✅ ColPali模型加载完成")
+                    except Exception as e:
+                        return f"Failed to load ColPali: {e}", [], ""
+                else:
+                    return "ColPali not configured.", [], ""
+            
+            # 如果是Hybrid且还未加载，现在加载
+            if retrieval_mode == "hybrid_dense_colpali" and retriever == "lazy":
+                if "dense" in self.retrievers and "colpali" in self.retrievers:
+                    try:
+                        print(f"⏳ 首次使用Hybrid (Dense+ColPali)，正在初始化...")
+                        # Ensure ColPali is loaded
+                        if self.retrievers["colpali"] is None:
+                            colpali_retriever = ColPaliRetriever.load(
+                                self._colpali_config["index_dir"],
+                                model_name=self._colpali_config["model_name"],
+                                device=self._colpali_config["device"]
+                            )
+                            self.retrievers["colpali"] = colpali_retriever
+                        
+                        from impl.retriever_hybrid import HybridRetriever
+                        retriever = HybridRetriever(
+                            retrievers={"dense": self.retrievers["dense"], "colpali": self.retrievers["colpali"]},
+                            weights={"dense": 0.5, "colpali": 0.5},
+                            fusion_method="weighted_sum"
+                        )
+                        self.retrievers["hybrid_dense_colpali"] = retriever
+                        print(f"✅ Hybrid (Dense+ColPali)初始化完成")
+                    except Exception as e:
+                        return f"Failed to load Hybrid retriever: {e}", [], ""
+                else:
+                    return "Hybrid retriever requires both Dense and ColPali.", [], ""
+                        print(f"✅ ColPali模型加载完成")
+                    except Exception as e:
+                        return f"Failed to load ColPali: {e}", [], ""
+                else:
+                    return "ColPali not configured.", [], ""
+            
             if not retriever:
                 return f"Error: Retrieval mode '{retrieval_mode}' not available", [], ""
             
-            self.pipeline.retriever = retriever
+            # Switch generator based on evidence mode
+            if evidence_mode == "image":
+                # Use image-based generator
+                try:
+                    from impl.generator_qwen_vl import QwenVLGenerator
+                    generator = QwenVLGenerator(self.config, use_images=True)
+                    print(f"🖼️  Using image-based generation")
+                except Exception as e:
+                    return f"Failed to load image generator: {e}", [], ""
+            else:
+                # Use existing text-based generator
+                generator = self.generator
+                print(f"📝 Using text-based generation")
+            
+            # Create temporary pipeline with selected generator
+            from core.pipeline import Pipeline
+            pipeline = Pipeline(
+                retriever=retriever,
+                selector=self.selector,
+                generator=generator,
+                logger=self.logger,
+                store=self.store
+            )
             
             # Parse doc filter
             doc_ids = None
@@ -553,19 +706,25 @@ class DocRAGUIV1:
             )
             
             # Run pipeline
-            result = self.pipeline.answer(query_input, self.config)
+            result = pipeline.answer(query_input, self.config)
             
             # Format evidence table
             evidence_rows = []
             if result.evidence and result.evidence.evidence:
                 for i, ev in enumerate(result.evidence.evidence, 1):
+                    # For image mode, show page info instead of snippet
+                    if evidence_mode == "image":
+                        snippet_text = f"[Image Mode] Page {ev.page_id}"
+                    else:
+                        snippet_text = ev.snippet[:100] + "..." if len(ev.snippet) > 100 else ev.snippet
+                    
                     evidence_rows.append([
                         i,
-                        retrieval_mode,  # Use retrieval mode as source
+                        f"{retrieval_mode} + {evidence_mode}",  # Show both modes
                         ev.doc_id,
                         ev.page_id,
                         f"{ev.score:.4f}",
-                        ev.snippet[:100] + "..." if len(ev.snippet) > 100 else ev.snippet
+                        snippet_text
                     ])
             
             answer = result.generation.output.answer if result.generation else "No answer generated."
