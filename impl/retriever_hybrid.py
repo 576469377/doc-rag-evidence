@@ -2,7 +2,7 @@
 """Hybrid retriever that combines multiple retrieval methods."""
 
 from typing import List, Dict, Any
-from core.schemas import QueryInput, AppConfig, RetrievalHit
+from core.schemas import QueryInput, AppConfig, RetrieveHit
 from core.inferences import Retriever
 
 
@@ -96,7 +96,7 @@ class HybridRetriever(Retriever):
             }
         )
     
-    def _weighted_score_fusion(self, all_hits: Dict[str, List[RetrievalHit]]) -> List[RetrievalHit]:
+    def _weighted_score_fusion(self, all_hits: Dict[str, List[RetrieveHit]]) -> List[RetrieveHit]:
         """
         Weighted score fusion with score normalization.
         
@@ -123,10 +123,15 @@ class HybridRetriever(Retriever):
                 norm_hits = []
                 for hit in hits:
                     norm_score = (hit.score - min_score) / score_range
-                    norm_hit = RetrievalHit(
+                    norm_hit = RetrieveHit(
                         unit_id=hit.unit_id,
+                        doc_id=hit.doc_id,
+                        page_id=hit.page_id,
+                        block_id=hit.block_id,
+                        text=hit.text,
                         score=norm_score,
-                        rank=hit.rank,
+                        bbox=hit.bbox,
+                        source=hit.source,
                         metadata={**hit.metadata, "original_score": hit.score, "source": name}
                     )
                     norm_hits.append(norm_hit)
@@ -134,10 +139,15 @@ class HybridRetriever(Retriever):
             else:
                 # All scores equal, use uniform 0.5
                 normalized_hits[name] = [
-                    RetrievalHit(
+                    RetrieveHit(
                         unit_id=h.unit_id,
+                        doc_id=h.doc_id,
+                        page_id=h.page_id,
+                        block_id=h.block_id,
+                        text=h.text,
                         score=0.5,
-                        rank=h.rank,
+                        bbox=h.bbox,
+                        source=h.source,
                         metadata={**h.metadata, "original_score": h.score, "source": name}
                     ) for h in hits
                 ]
@@ -162,10 +172,15 @@ class HybridRetriever(Retriever):
         # Build final hits
         final_hits = []
         for unit_id, (score, sources, base_hit) in merged_scores.items():
-            fused_hit = RetrievalHit(
+            fused_hit = RetrieveHit(
                 unit_id=unit_id,
+                doc_id=base_hit.doc_id,
+                page_id=base_hit.page_id,
+                block_id=base_hit.block_id,
+                text=base_hit.text,
                 score=score,
-                rank=0,  # Will be re-ranked after sorting
+                bbox=base_hit.bbox,
+                source="hybrid",
                 metadata={
                     **base_hit.metadata,
                     "fusion_sources": sources,
@@ -177,7 +192,7 @@ class HybridRetriever(Retriever):
         
         return final_hits
     
-    def _reciprocal_rank_fusion(self, all_hits: Dict[str, List[RetrievalHit]], k: int = 60) -> List[RetrievalHit]:
+    def _reciprocal_rank_fusion(self, all_hits: Dict[str, List[RetrieveHit]], k: int = 60) -> List[RetrieveHit]:
         """
         Reciprocal Rank Fusion (RRF).
         
@@ -203,10 +218,15 @@ class HybridRetriever(Retriever):
         # Build final hits
         final_hits = []
         for unit_id, (score, sources, base_hit) in rrf_scores.items():
-            fused_hit = RetrievalHit(
+            fused_hit = RetrieveHit(
                 unit_id=unit_id,
+                doc_id=base_hit.doc_id,
+                page_id=base_hit.page_id,
+                block_id=base_hit.block_id,
+                text=base_hit.text,
                 score=score,
-                rank=0,
+                bbox=base_hit.bbox,
+                source="hybrid",
                 metadata={
                     **base_hit.metadata,
                     "fusion_sources": sources,

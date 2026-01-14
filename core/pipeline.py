@@ -89,7 +89,9 @@ class Pipeline:
                 evidence=evidence.evidence,
                 config=config,
             )
+            print(f"🔧 Pipeline: Calling generator.generate() with {len(evidence.evidence)} evidence items")
             gen: GenerationResult = self.generator.generate(req)
+            print(f"🔧 Pipeline: Generator returned: {gen}")
             record.generation = gen
 
             record.finished_at = _iso_now()
@@ -97,6 +99,9 @@ class Pipeline:
             return record
 
         except Exception as e:
+            print(f"❌ Pipeline error: {e}")
+            import traceback
+            traceback.print_exc()
             record.status = RunStatus(ok=False, error_type=type(e).__name__, error_message=str(e))
             record.finished_at = _iso_now()
             self.logger.save_run(record)

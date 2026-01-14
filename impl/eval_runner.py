@@ -27,13 +27,17 @@ from core.schemas import (
     QueryInput, QueryRunRecord
 )
 from core.pipeline import Pipeline
+from impl.metrics import RAGMetrics
 
 
 class EvalRunner:
-    """Batch evaluation runner."""
+    """Batch evaluation runner with comprehensive metrics."""
 
-    def __init__(self, pipeline: Pipeline):
+    def __init__(self, pipeline: Pipeline, enable_metrics: bool = True):
         self.pipeline = pipeline
+        self.enable_metrics = enable_metrics
+        if enable_metrics:
+            self.rag_metrics = RAGMetrics()
 
     def evaluate(self, dataset: EvalDataset, config: AppConfig) -> EvalReport:
         """
@@ -52,6 +56,7 @@ class EvalRunner:
         rows: List[EvalRow] = []
         latencies: List[int] = []
         success_count = 0
+        detailed_metrics = []  # For RAG metrics
 
         for item in dataset.items:
             print(f"Processing question {item.qid}: {item.question[:50]}...")
@@ -92,6 +97,17 @@ class EvalRunner:
                 if status_ok:
                     success_count += 1
                     latencies.append(elapsed_ms)
+                    
+                    # Compute detailed metrics if ground truth available
+                    if self.enable_metrics and hasattr(item, 'ground_truth'):
+                        try:
+                            query_metrics = self.rag_metrics.evaluate_full_pipeline(
+                                record,
+                                item.ground_truth
+                            )
+                            detailed_metrics.append(query_metrics)
+                        except Exception as e:
+                            print(f"  Warning: Failed to compute metrics: {e}")
 
             except Exception as e:
                 elapsed_ms = int((time.time() - start_time) * 1000)
@@ -110,17 +126,24 @@ class EvalRunner:
 
         # Compute metrics
         avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+        
+        # Aggregate detailed metrics
+        extra_metrics = {
+            "success_count": success_count,
+            "success_rate": success_count / len(dataset.items) if dataset.items else 0.0
+        }
+        
+        if detailed_metrics:
+            aggregated = self.rag_metrics.aggregate_metrics(detailed_metrics)
+            extra_metrics.update(aggregated)
 
         metrics = EvalMetrics(
             n=len(dataset.items),
-            exact_match=None,  # V0: not implemented
-            contains_match=None,  # V0: not implemented
+            exact_match=extra_metrics.get("generation_em"),
+            contains_match=None,  # Could add if needed
             avg_latency_ms=avg_latency,
-            evidence_hit_rate=None,  # V0: not implemented
-            extra={
-                "success_count": success_count,
-                "success_rate": success_count / len(dataset.items) if dataset.items else 0.0
-            }
+            evidence_hit_rate=extra_metrics.get("evidence_hit_rate"),
+            extra=extra_metrics
         )
 
         # Save artifacts
@@ -137,7 +160,15 @@ class EvalRunner:
         print(f"\nEvaluation complete!")
         print(f"  Success rate: {metrics.extra['success_rate']:.2%}")
         print(f"  Avg latency: {avg_latency:.0f}ms")
-        print(f"  Artifacts saved to: {artifact_paths.get('report')}")
+        
+        # Print detailed metrics if available
+        if detailed_metrics:
+            print(f"\n📊 Detailed Metrics:")
+            for key, value in sorted(metrics.extra.items()):
+                if key not in ["success_count", "success_rate"] and isinstance(value, (int, float)):
+                    print(f"  {key}: {value:.3f}")
+        
+        print(f"\n  Artifacts saved to: {artifact_paths.get('report')}")
 
         return report
 

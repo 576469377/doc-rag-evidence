@@ -10,6 +10,7 @@ import time
 import base64
 
 from core.schemas import GenerationRequest, GenerationResult, GenerationOutput, EvidenceItem, AppConfig
+from impl.context_assembler import ContextAssembler
 
 
 class QwenVLGenerator:
@@ -22,19 +23,27 @@ class QwenVLGenerator:
     - Mixed mode: combines images and text
     """
     
-    def __init__(self, config: AppConfig, use_images: bool = False):
+    def __init__(self, config: AppConfig, use_images: bool = False, store=None):
         """
         Initialize generator.
         
         Args:
             config: Application config with LLM settings
             use_images: If True, use page images instead of text snippets
+            store: Optional store for context enrichment
         """
         self.config = config
         self.llm_config = config.llm
         self.use_images = use_images
         self.endpoint = self.llm_config["endpoint"]
         self.model = self.llm_config["model"]
+        self.store = store
+        
+        # Initialize context assembler
+        self.context_assembler = ContextAssembler(
+            max_context_chars=self.llm_config.get("max_context_chars", 8000),
+            prefer_full_text=True
+        )
         
         print(f"✅ Initialized QwenVLGenerator (use_images={use_images})")
     
@@ -232,20 +241,24 @@ class QwenVLGenerator:
     
     def _generate_with_text(self, request: GenerationRequest) -> tuple:
         """
-        Generate answer using text snippets (original mode).
+        Generate answer using text snippets with context assembly.
         
         Returns:
             (answer, cited_units)
         """
-        # Format evidence with citation markers
-        evidence_texts = []
-        for i, ev in enumerate(request.evidence, 1):
-            text = ev.snippet if ev.snippet else ""
-            if not text:
-                continue
-            evidence_texts.append(f"[{i}] {text}")
+        print(f"📝 _generate_with_text called with {len(request.evidence)} evidence items")
         
-        context = "\n\n".join(evidence_texts)
+        # Use context assembler for deduplication and truncation
+        context, deduped_items, citation_map = self.context_assembler.assemble(
+            request.evidence,
+            store=self.store
+        )
+        
+        print(f"📝 Context assembled: {len(context)} chars, {len(deduped_items)} items")
+        
+        if not context:
+            print(f"⚠️  No context available!")
+            return "无可用的证据内容。", []
         
         system_prompt = (
             "你是一个专业的文档问答助手。请基于提供的证据回答问题。\n"
@@ -265,6 +278,9 @@ class QwenVLGenerator:
         # Call completions API
         url = f"{self.endpoint}/v1/chat/completions"
         
+        print(f"🔍 Calling API: {url}")
+        print(f"📦 Prompt length: {len(system_prompt) + len(user_prompt)} chars")
+        
         payload = {
             "model": self.model,
             "messages": [
@@ -278,22 +294,32 @@ class QwenVLGenerator:
         
         try:
             response = requests.post(url, json=payload, timeout=60)
+            print(f"📡 Response status: {response.status_code}")
             response.raise_for_status()
             
             result = response.json()
             answer = result["choices"][0]["message"]["content"].strip()
             
-            # Extract citations
+            print(f"✅ Got answer: {answer[:100]}...")
+            
+            # Extract citations - use citation_map from assembler
             cited_units = []
-            for i, ev in enumerate(request.evidence, 1):
-                if f"[{i}]" in answer:
-                    cited_units.append(ev.unit_id)
+            for citation_num in range(1, len(deduped_items) + 1):
+                if f"[{citation_num}]" in answer:
+                    # Find unit_id for this citation number
+                    for unit_id, cit_num in citation_map.items():
+                        if cit_num == citation_num:
+                            cited_units.append(unit_id)
+                            break
             
             if not cited_units:
-                cited_units = [ev.unit_id for ev in request.evidence]
+                # Fallback: cite all
+                cited_units = [ev.unit_id for ev in deduped_items]
             
             return answer, cited_units
             
         except Exception as e:
             print(f"❌ Text API generation failed: {e}")
+            import traceback
+            traceback.print_exc()
             return f"生成答案时出错: {str(e)}", []

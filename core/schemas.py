@@ -189,7 +189,9 @@ class EvidenceItem(BaseModel):
     snippet: str
     bbox: Optional[BBox] = None
     score: float
+    source: Literal["bm25", "dense", "colpali", "hybrid", "rerank"] = "bm25"
     rationale: Optional[str] = None  # optional explanation from selector
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class EvidenceSelectionResult(BaseModel):

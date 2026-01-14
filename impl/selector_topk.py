@@ -64,7 +64,9 @@ class TopKEvidenceSelector:
                 snippet=snippet,
                 bbox=hit.bbox,
                 score=hit.score,
-                rationale=f"BM25 score: {hit.score:.4f}"
+                source=hit.source,
+                rationale=f"BM25 score: {hit.score:.4f}",
+                metadata=hit.metadata
             )
             evidence_items.append(evidence)
 

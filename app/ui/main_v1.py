@@ -4,11 +4,17 @@ Supports multiple retrieval modes: BM25, Dense, ColPali, Hybrid.
 """
 from __future__ import annotations
 
+import os
 import uuid
 import yaml
 from pathlib import Path
 from typing import Optional, List, Tuple
 import sys
+
+# Clear proxy settings to avoid localhost connection issues
+for proxy_var in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 
+                  'all_proxy', 'ALL_PROXY', 'no_proxy', 'NO_PROXY']:
+    os.environ.pop(proxy_var, None)
 
 # Add project root to Python path
 project_root = Path(__file__).parent.parent.parent
@@ -326,6 +332,75 @@ class DocRAGUIV1:
             label="Evidence Format",
             info="text: 使用文本snippet | image: 使用完整页面图片（更准确，适合VL模型）"
         )
+        
+        # Hybrid fusion settings (collapsible)
+        with gr.Accordion("⚙️ Hybrid Fusion Settings (仅对 Hybrid 模式生效)", open=False):
+            gr.Markdown("### 自定义混合检索配置")
+            
+            with gr.Row():
+                with gr.Column():
+                    fusion_method = gr.Radio(
+                        choices=["weighted_sum", "rrf"],
+                        value="weighted_sum",
+                        label="Fusion Method (融合方法)",
+                        info="weighted_sum: 加权分数融合 | rrf: 倒数排名融合"
+                    )
+                    
+                    gr.Markdown("""
+                    #### 融合方法说明
+                    - **Weighted Sum**: 将各检索器的分数归一化后加权求和
+                      - 考虑分数大小，高分文档优势明显
+                      - 适用：检索器分数有明确物理意义
+                    
+                    - **RRF (Reciprocal Rank Fusion)**: 只考虑排名位置
+                      - 公式：score = sum(1 / (60 + rank))
+                      - 对分数尺度不敏感，更鲁棒
+                      - 适用：多个检索器分数范围差异大时
+                    """)
+                
+                with gr.Column():
+                    gr.Markdown("#### 检索器选择与权重")
+                    
+                    retriever_1 = gr.Dropdown(
+                        choices=["bm25", "dense", "colpali"],
+                        value="bm25",
+                        label="First Retriever (检索器1)",
+                        info="选择第一个检索器"
+                    )
+                    
+                    retriever_2 = gr.Dropdown(
+                        choices=["bm25", "dense", "colpali"],
+                        value="dense",
+                        label="Second Retriever (检索器2)",
+                        info="选择第二个检索器"
+                    )
+                    
+                    weight_1 = gr.Slider(
+                        minimum=0.0,
+                        maximum=1.0,
+                        value=0.4,
+                        step=0.05,
+                        label="Weight of First Retriever",
+                        info="第一个检索器的权重（第二个自动为 1 - weight_1）"
+                    )
+                    
+                    weight_display = gr.Markdown(
+                        "**当前权重**: 检索器1 = 0.40, 检索器2 = 0.60"
+                    )
+            
+            gr.Markdown("---")
+            gr.Markdown("💡 **快速配置**: 选择两个不同的检索器，调整权重滑块，点击 'Ask Question' 应用配置")
+            
+            # Update weight display when slider changes
+            def update_weight_display(w1):
+                w2 = 1.0 - w1
+                return f"**当前权重**: 检索器1 = {w1:.2f}, 检索器2 = {w2:.2f}"
+            
+            weight_1.change(
+                fn=update_weight_display,
+                inputs=[weight_1],
+                outputs=[weight_display]
+            )
 
         gr.Markdown("### 📑 Evidence")
         evidence_display = gr.Dataframe(
@@ -339,7 +414,16 @@ class DocRAGUIV1:
         # Event handler
         query_btn.click(
             fn=self._handle_query,
-            inputs=[question, doc_filter, retrieval_mode, evidence_mode],
+            inputs=[
+                question, 
+                doc_filter, 
+                retrieval_mode, 
+                evidence_mode,
+                fusion_method,
+                retriever_1,
+                retriever_2,
+                weight_1
+            ],
             outputs=[answer_box, evidence_display, query_id_box]
         )
 
@@ -355,6 +439,61 @@ class DocRAGUIV1:
                     value=list(self.retrievers.keys())[0],
                     label="Retrieval Mode for Evaluation"
                 )
+                
+                # Hybrid fusion settings for evaluation
+                with gr.Accordion("⚙️ Hybrid Fusion Settings (仅对 Hybrid 模式生效)", open=False):
+                    gr.Markdown("### 评估中的混合检索配置")
+                    
+                    with gr.Row():
+                        with gr.Column():
+                            eval_fusion_method = gr.Radio(
+                                choices=["weighted_sum", "rrf"],
+                                value="weighted_sum",
+                                label="Fusion Method",
+                                info="weighted_sum: 加权分数 | rrf: 倒数排名"
+                            )
+                        
+                        with gr.Column():
+                            eval_retriever_1 = gr.Dropdown(
+                                choices=["bm25", "dense", "colpali"],
+                                value="bm25",
+                                label="First Retriever",
+                                info="选择第一个检索器"
+                            )
+                            
+                            eval_retriever_2 = gr.Dropdown(
+                                choices=["bm25", "dense", "colpali"],
+                                value="dense",
+                                label="Second Retriever",
+                                info="选择第二个检索器"
+                            )
+                            
+                            eval_weight_1 = gr.Slider(
+                                minimum=0.0,
+                                maximum=1.0,
+                                value=0.4,
+                                step=0.05,
+                                label="Weight of First Retriever",
+                                info="第一个检索器的权重"
+                            )
+                            
+                            eval_weight_display = gr.Markdown(
+                                "**当前权重**: 检索器1 = 0.40, 检索器2 = 0.60"
+                            )
+                    
+                    gr.Markdown("💡 Hybrid 模式下，将使用以上配置进行批量评估")
+                    
+                    # Update weight display
+                    def update_eval_weight_display(w1):
+                        w2 = 1.0 - w1
+                        return f"**当前权重**: 检索器1 = {w1:.2f}, 检索器2 = {w2:.2f}"
+                    
+                    eval_weight_1.change(
+                        fn=update_eval_weight_display,
+                        inputs=[eval_weight_1],
+                        outputs=[eval_weight_display]
+                    )
+                
                 eval_btn = gr.Button("▶️ Run Evaluation", variant="primary")
                 eval_status = gr.Textbox(label="Evaluation Status", lines=5, interactive=False)
 
@@ -366,7 +505,14 @@ class DocRAGUIV1:
         # Event handler
         eval_btn.click(
             fn=self._handle_eval,
-            inputs=[eval_file, eval_mode],
+            inputs=[
+                eval_file, 
+                eval_mode,
+                eval_fusion_method,
+                eval_retriever_1,
+                eval_retriever_2,
+                eval_weight_1
+            ],
             outputs=[eval_status, eval_metrics, download_csv, download_json]
         )
 
@@ -607,7 +753,11 @@ class DocRAGUIV1:
         question: str,
         doc_filter: str,
         retrieval_mode: str,
-        evidence_mode: str = "text"
+        evidence_mode: str = "text",
+        fusion_method: str = "weighted_sum",
+        retriever_1: str = "bm25",
+        retriever_2: str = "dense",
+        weight_1: float = 0.4
     ) -> Tuple[str, List, str]:
         """Handle query with selected retrieval mode and evidence format."""
         try:
@@ -634,54 +784,76 @@ class DocRAGUIV1:
                 else:
                     return "ColPali not configured.", [], ""
             
-            # 如果是Hybrid且还未加载，现在加载
-            if retrieval_mode == "hybrid_dense_colpali" and retriever == "lazy":
-                if "dense" in self.retrievers and "colpali" in self.retrievers:
-                    try:
-                        print(f"⏳ 首次使用Hybrid (Dense+ColPali)，正在初始化...")
-                        # Ensure ColPali is loaded
-                        if self.retrievers["colpali"] is None:
-                            colpali_retriever = ColPaliRetriever.load(
-                                self._colpali_config["index_dir"],
-                                model_name=self._colpali_config["model_name"],
-                                device=self._colpali_config["device"]
-                            )
-                            self.retrievers["colpali"] = colpali_retriever
-                        
-                        from impl.retriever_hybrid import HybridRetriever
-                        retriever = HybridRetriever(
-                            retrievers={"dense": self.retrievers["dense"], "colpali": self.retrievers["colpali"]},
-                            weights={"dense": 0.5, "colpali": 0.5},
-                            fusion_method="weighted_sum"
-                        )
-                        self.retrievers["hybrid_dense_colpali"] = retriever
-                        print(f"✅ Hybrid (Dense+ColPali)初始化完成")
-                    except Exception as e:
-                        return f"Failed to load Hybrid retriever: {e}", [], ""
-                else:
-                    return "Hybrid retriever requires both Dense and ColPali.", [], ""
-                        print(f"✅ ColPali模型加载完成")
-                    except Exception as e:
-                        return f"Failed to load ColPali: {e}", [], ""
-                else:
-                    return "ColPali not configured.", [], ""
+            # 动态重建 Hybrid retriever（使用用户指定的检索器组合、权重和融合方法）
+            if "hybrid" in retrieval_mode:
+                from impl.retriever_hybrid import HybridRetriever
+                
+                # 验证用户选择的两个检索器不同
+                if retriever_1 == retriever_2:
+                    return f"⚠️ 请选择两个不同的检索器！当前都选择了 {retriever_1}", [], ""
+                
+                # 确保所需的检索器已加载
+                retriever_objs = {}
+                for ret_name in [retriever_1, retriever_2]:
+                    if ret_name == "colpali" and self.retrievers.get("colpali") is None:
+                        # 动态加载ColPali
+                        if hasattr(self, "_colpali_config"):
+                            try:
+                                print(f"⏳ 首次使用ColPali，正在加载模型...")
+                                colpali_retriever = ColPaliRetriever.load(
+                                    self._colpali_config["index_dir"],
+                                    model_name=self._colpali_config["model_name"],
+                                    device=self._colpali_config["device"]
+                                )
+                                self.retrievers["colpali"] = colpali_retriever
+                                print(f"✅ ColPali模型加载完成")
+                            except Exception as e:
+                                return f"Failed to load ColPali: {e}", [], ""
+                        else:
+                            return f"ColPali not configured.", [], ""
+                    
+                    if ret_name not in self.retrievers:
+                        return f"⚠️ 检索器 '{ret_name}' 未找到，请先构建索引", [], ""
+                    
+                    retriever_objs[ret_name] = self.retrievers[ret_name]
+                
+                # 计算归一化权重
+                weight_2 = 1.0 - weight_1
+                weights = {retriever_1: weight_1, retriever_2: weight_2}
+                
+                # 创建 Hybrid retriever
+                retriever = HybridRetriever(
+                    retrievers=retriever_objs,
+                    weights=weights,
+                    fusion_method=fusion_method
+                )
+                
+                print(f"🔄 Custom Hybrid ({retriever_1}+{retriever_2}) with {fusion_method}")
+                print(f"   Weights: {retriever_1}={weight_1:.2f}, {retriever_2}={weight_2:.2f}")
             
-            if not retriever:
-                return f"Error: Retrieval mode '{retrieval_mode}' not available", [], ""
+            if retriever is None:
+                return f"Retriever '{retrieval_mode}' not available. Please build indices first.", [], ""
+
             
             # Switch generator based on evidence mode
             if evidence_mode == "image":
                 # Use image-based generator
                 try:
                     from impl.generator_qwen_vl import QwenVLGenerator
-                    generator = QwenVLGenerator(self.config, use_images=True)
+                    generator = QwenVLGenerator(self.config, use_images=True, store=self.store)
                     print(f"🖼️  Using image-based generation")
                 except Exception as e:
                     return f"Failed to load image generator: {e}", [], ""
             else:
-                # Use existing text-based generator
-                generator = self.generator
-                print(f"📝 Using text-based generation")
+                # Use existing text-based generator (or create new one with store)
+                try:
+                    from impl.generator_qwen_vl import QwenVLGenerator
+                    generator = QwenVLGenerator(self.config, use_images=False, store=self.store)
+                    print(f"📝 Using text-based generation with context assembly")
+                except Exception as e:
+                    # Fallback to original generator
+                    generator = self.generator
+                    print(f"📝 Using text-based generation")
             
             # Create temporary pipeline with selected generator
             from core.pipeline import Pipeline
@@ -729,6 +901,16 @@ class DocRAGUIV1:
             
             answer = result.generation.output.answer if result.generation else "No answer generated."
             
+            # Debug: check what's in the result
+            if not result.generation:
+                print(f"⚠️  Warning: result.generation is None")
+            elif not result.generation.output:
+                print(f"⚠️  Warning: result.generation.output is None")
+            elif not result.generation.output.answer:
+                print(f"⚠️  Warning: answer is empty")
+            else:
+                print(f"✅ Generated answer: {answer[:100]}...")
+            
             return answer, evidence_rows, query_input.query_id
             
         except Exception as e:
@@ -739,15 +921,68 @@ class DocRAGUIV1:
     def _handle_eval(
         self,
         eval_file,
-        eval_mode: str
+        eval_mode: str,
+        fusion_method: str = "weighted_sum",
+        retriever_1: str = "bm25",
+        retriever_2: str = "dense",
+        weight_1: float = 0.4
     ) -> Tuple[str, dict, Optional[str], Optional[str]]:
-        """Handle batch evaluation."""
+        """Handle batch evaluation with custom hybrid configuration."""
         try:
             if eval_file is None:
                 return "Error: No evaluation file uploaded", {}, None, None
             
-            # Switch retriever
+            # Get or create retriever with custom hybrid config
             retriever = self.retrievers.get(eval_mode)
+            
+            # For hybrid modes, create custom configuration
+            if "hybrid" in eval_mode:
+                from impl.retriever_hybrid import HybridRetriever
+                
+                # Validate different retrievers
+                if retriever_1 == retriever_2:
+                    return f"⚠️ 请选择两个不同的检索器！当前都选择了 {retriever_1}", {}, None, None
+                
+                # Ensure retrievers are loaded
+                retriever_objs = {}
+                for ret_name in [retriever_1, retriever_2]:
+                    if ret_name == "colpali" and self.retrievers.get("colpali") is None:
+                        if hasattr(self, "_colpali_config"):
+                            try:
+                                print(f"⏳ Loading ColPali for evaluation...")
+                                from impl.index_colpali import ColPaliRetriever
+                                colpali_retriever = ColPaliRetriever.load(
+                                    self._colpali_config["index_dir"],
+                                    model_name=self._colpali_config["model_name"],
+                                    device=self._colpali_config["device"]
+                                )
+                                self.retrievers["colpali"] = colpali_retriever
+                                print(f"✅ ColPali loaded")
+                            except Exception as e:
+                                return f"Failed to load ColPali: {e}", {}, None, None
+                        else:
+                            return f"ColPali not configured.", {}, None, None
+                    
+                    if ret_name not in self.retrievers:
+                        return f"⚠️ 检索器 '{ret_name}' 未找到，请先构建索引", {}, None, None
+                    
+                    retriever_objs[ret_name] = self.retrievers[ret_name]
+                
+                # Calculate weights
+                weight_2 = 1.0 - weight_1
+                weights = {retriever_1: weight_1, retriever_2: weight_2}
+                
+                # Create hybrid retriever
+                retriever = HybridRetriever(
+                    retrievers=retriever_objs,
+                    weights=weights,
+                    fusion_method=fusion_method
+                )
+                
+                print(f"📊 Evaluation Hybrid Config:")
+                print(f"   {retriever_1} ({weight_1:.2f}) + {retriever_2} ({weight_2:.2f})")
+                print(f"   Fusion: {fusion_method}")
+            
             if not retriever:
                 return f"Error: Retrieval mode '{eval_mode}' not available", {}, None, None
             
@@ -774,6 +1009,8 @@ class DocRAGUIV1:
             
             status = f"✅ Evaluation complete\n"
             status += f"Mode: {eval_mode}\n"
+            if "hybrid" in eval_mode:
+                status += f"Config: {retriever_1}({weight_1:.2f}) + {retriever_2}({weight_2:.2f}), {fusion_method}\n"
             status += f"Samples: {len(dataset)}\n"
             status += f"Results saved to: {report_dir}"
             

@@ -9,3 +9,16 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 /backup_old_files_20260107_033516
+/prompts
+CLEANUP_SUMMARY.txt
+README.md.bak
+README.md.old
+TROUBLESHOOTING.md
+VERIFICATION_REPORT.md
+
+# 软著相关文档（不公开）
+USER_MANUAL.md
+README_OPTIMIZATION.md
+*.draft.md
+
+FINAL_UPDATE_SUMMARY.md
