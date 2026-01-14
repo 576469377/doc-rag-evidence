@@ -63,7 +63,7 @@ graph TD
 | **检索** | 关键词 | BM25 (Rank-BM25) |
 | | 语义 | Qwen3-Embedding-0.6B + FAISS |
 | | 视觉 | ColPali (ColQwen3-Embed-4B) |
-| **生成** | LLM | Qwen3-VL-4B-Instruct (vLLM) |
+| **生成** | MLLM | Qwen3-VL-4B-Instruct (vLLM) |
 | **OCR** | 识别 | HunyuanOCR (vLLM) |
 | **存储** | 文档 | Local FS (JSON) |
 | | 索引 | FAISS + BM25 Index |
@@ -276,7 +276,7 @@ top_k_evidence: 5           # 最终证据数
 
 # 生成配置
 generator:
-  type: qwen3_vl            # qwen3_vl | qwen3_llm | template
+  type: qwen3_vl            # qwen3_vl (MLLM) | qwen3_llm | template
   
 llm:
   backend: vllm
