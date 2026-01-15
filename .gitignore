@@ -2,7 +2,7 @@ data/
 docs/
 
 # Python
-__pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -29,3 +29,5 @@ README_OPTIMIZATION.md
 *.draft.md
 
 FINAL_UPDATE_SUMMARY.md
+
+test*.py
