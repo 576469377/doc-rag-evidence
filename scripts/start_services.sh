@@ -8,12 +8,29 @@ set -e
 # 清除代理设置（避免localhost访问问题）
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
 
+# 从 app.yaml 读取端口配置
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_LOADER="$SCRIPT_DIR/config_loader.py"
+
+OCR_PORT=$(python "$CONFIG_LOADER" ocr.endpoint | sed 's|.*:||')
+EMB_PORT=$(python "$CONFIG_LOADER" dense.endpoint | sed 's|.*:||')
+GEN_PORT=$(python "$CONFIG_LOADER" llm.endpoint | sed 's|.*:||')
+
+OCR_GPU=$(python "$CONFIG_LOADER" ocr.gpu)
+EMB_GPU=$(python "$CONFIG_LOADER" dense.gpu)
+GEN_GPU=$(python "$CONFIG_LOADER" llm.gpu)
+
+OCR_MODEL=$(python "$CONFIG_LOADER" ocr.model | sed 's|.*/||')
+EMB_MODEL=$(python "$CONFIG_LOADER" dense.model | sed 's|.*/||')
+GEN_MODEL=$(python "$CONFIG_LOADER" llm.model | sed 's|.*/||')
+
 # 解析参数
 MODE="${1:-all}"  # 默认启动所有服务
 
 echo "🚀 启动 Doc RAG Evidence 后台服务"
 echo "================================"
 echo "模式: $MODE"
+echo "端口配置: OCR=$OCR_PORT, Embedding=$EMB_PORT, Generation=$GEN_PORT"
 
 # 激活conda环境
 source /workspace/program/miniconda3/etc/profile.d/conda.sh
@@ -23,14 +40,14 @@ cd /workspace/doc-rag-evidence
 # 创建日志目录
 mkdir -p logs
 
-# ========== OCR服务 (端口8000) ==========
+# ========== OCR服务 ==========
 if [ "$MODE" = "all" ] || [ "$MODE" = "ocr" ]; then
     echo ""
-    echo "🛑 停止旧的OCR服务 (端口8000)..."
-    OLD_PIDS=$(ps aux | grep -E "vllm.*8000" | grep -v grep | awk '{print $2}')
+    echo "🛑 停止旧的OCR服务 (端口$OCR_PORT)..."
+    OLD_PIDS=$(ps aux | grep -E "vllm.*$OCR_PORT" | grep -v grep | awk '{print $2}')
     if [ -n "$OLD_PIDS" ]; then
         echo "   发现运行中的进程: $OLD_PIDS"
-        pkill -f "vllm.*8000" 2>/dev/null || true
+        pkill -f "vllm.*$OCR_PORT" 2>/dev/null || true
         sleep 3
         echo "   ✅ 已停止旧OCR服务"
     else
@@ -39,8 +56,9 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "ocr" ]; then
     
     echo ""
     echo "⏳ 启动OCR服务..."
-    echo "   模型: HunyuanOCR"
-    echo "   GPU: GPU 0"
+    echo "   模型: $OCR_MODEL"
+    echo "   GPU: $OCR_GPU"
+    echo "   端口: $OCR_PORT"
     echo "   日志: logs/ocr_vllm.log"
     
     nohup bash scripts/start_ocr_vllm.sh > logs/ocr_vllm.log 2>&1 &
@@ -50,7 +68,7 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "ocr" ]; then
     
     for i in {1..40}; do
         sleep 2
-        if curl -s --max-time 3 http://localhost:8000/v1/models >/dev/null 2>&1; then
+        if curl -s --max-time 3 http://localhost:$OCR_PORT/v1/models >/dev/null 2>&1; then
             echo "   ✅ OCR服务启动成功！"
             break
         fi
@@ -58,14 +76,14 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "ocr" ]; then
     done
 fi
 
-# ========== Embedding服务 (端口8001) ==========
+# ========== Embedding服务 ==========
 if [ "$MODE" = "all" ] || [ "$MODE" = "embedding" ]; then
     echo ""
-    echo "🛑 停止旧的Embedding服务 (端口8001)..."
-    OLD_PIDS=$(ps aux | grep -E "vllm.*8001" | grep -v grep | awk '{print $2}')
+    echo "🛑 停止旧的Embedding服务 (端口$EMB_PORT)..."
+    OLD_PIDS=$(ps aux | grep -E "vllm.*$EMB_PORT" | grep -v grep | awk '{print $2}')
     if [ -n "$OLD_PIDS" ]; then
         echo "   发现运行中的进程: $OLD_PIDS"
-        pkill -f "vllm.*8001" 2>/dev/null || true
+        pkill -f "vllm.*$EMB_PORT" 2>/dev/null || true
         sleep 3
         echo "   ✅ 已停止旧Embedding服务"
     else
@@ -74,8 +92,9 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "embedding" ]; then
     
     echo ""
     echo "⏳ 启动Embedding服务..."
-    echo "   模型: Qwen3-Embedding-0.6B"
-    echo "   GPU: GPU 1"
+    echo "   模型: $EMB_MODEL"
+    echo "   GPU: $EMB_GPU"
+    echo "   端口: $EMB_PORT"
     echo "   日志: logs/embedding_vllm.log"
     
     nohup bash scripts/start_embedding_vllm.sh > logs/embedding_vllm.log 2>&1 &
@@ -85,7 +104,7 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "embedding" ]; then
     
     for i in {1..40}; do
         sleep 2
-        if curl -s --max-time 3 http://localhost:8001/v1/models >/dev/null 2>&1; then
+        if curl -s --max-time 3 http://localhost:$EMB_PORT/v1/models >/dev/null 2>&1; then
             echo "   ✅ Embedding服务启动成功！"
             break
         fi
@@ -93,17 +112,17 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "embedding" ]; then
     done
 fi
 
-# ========== Generation服务 (端口8002) ==========
+# ========== Generation服务 ==========
 if [ "$MODE" = "all" ] || [ "$MODE" = "generation" ]; then
 
 echo ""
 echo "� 停止旧的vLLM服务..."
 
 # 查找并停止端口8002的vLLM进程
-OLD_PIDS=$(ps aux | grep -E "(vllm.*8002|python.*start_generation)" | grep -v grep | awk '{print $2}')
+OLD_PIDS=$(ps aux | grep -E "(vllm.*$GEN_PORT|python.*start_generation)" | grep -v grep | awk '{print $2}')
 if [ -n "$OLD_PIDS" ]; then
     echo "   发现运行中的进程: $OLD_PIDS"
-    pkill -f "vllm.*8002" 2>/dev/null || true
+    pkill -f "vllm.*$GEN_PORT" 2>/dev/null || true
     sleep 3
     echo "   ✅ 已停止旧服务"
 else
@@ -112,8 +131,9 @@ fi
 
 echo ""
 echo "⏳ 启动Generation服务..."
-echo "   模型: Qwen3-VL-4B-Instruct"
-echo "   GPU: GPU 3"
+echo "   模型: $GEN_MODEL"
+echo "   GPU: $GEN_GPU"
+echo "   端口: $GEN_PORT"
 echo "   日志: logs/generation_vllm.log"
 
 # 后台启动服务
@@ -137,7 +157,7 @@ for i in {1..80}; do
     fi
     
     # 检查服务是否响应
-    if curl -s --max-time 3 http://localhost:8002/v1/models >/dev/null 2>&1; then
+    if curl -s --max-time 3 http://localhost:$GEN_PORT/v1/models >/dev/null 2>&1; then
         echo ""
         echo "   ✅ Generation服务启动成功！"
         SUCCESS=true
@@ -168,22 +188,22 @@ echo ""
 echo "📊 服务状态："
 
 # 检查各服务状态
-if curl -s --max-time 3 http://localhost:8000/v1/models >/dev/null 2>&1; then
-    echo "   OCR (HunyuanOCR):        http://localhost:8000 ✅"
+if curl -s --max-time 3 http://localhost:$OCR_PORT/v1/models >/dev/null 2>&1; then
+    echo "   OCR ($OCR_MODEL):        http://localhost:$OCR_PORT ✅"
 else
-    echo "   OCR (HunyuanOCR):        http://localhost:8000 ❌"
+    echo "   OCR ($OCR_MODEL):        http://localhost:$OCR_PORT ❌"
 fi
 
-if curl -s --max-time 3 http://localhost:8001/v1/models >/dev/null 2>&1; then
-    echo "   Embedding (Qwen3):       http://localhost:8001 ✅"
+if curl -s --max-time 3 http://localhost:$EMB_PORT/v1/models >/dev/null 2>&1; then
+    echo "   Embedding ($EMB_MODEL):  http://localhost:$EMB_PORT ✅"
 else
-    echo "   Embedding (Qwen3):       http://localhost:8001 ❌"
+    echo "   Embedding ($EMB_MODEL):  http://localhost:$EMB_PORT ❌"
 fi
 
-if curl -s --max-time 3 http://localhost:8002/v1/models >/dev/null 2>&1; then
-    echo "   Generation (Qwen3-VL):   http://localhost:8002 ✅"
+if curl -s --max-time 3 http://localhost:$GEN_PORT/v1/models >/dev/null 2>&1; then
+    echo "   Generation ($GEN_MODEL): http://localhost:$GEN_PORT ✅"
 else
-    echo "   Generation (Qwen3-VL):   http://localhost:8002 ❌"
+    echo "   Generation ($GEN_MODEL): http://localhost:$GEN_PORT ❌"
 fi
 
 echo ""

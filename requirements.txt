@@ -1,6 +1,6 @@
 # Core dependencies
 pydantic>=2.0.0
-pyyaml>=6.0
+pyyaml>=6.0  # Required for config loading
 
 # PDF processing
 pdfplumber>=0.10.0
@@ -12,19 +12,24 @@ Pillow>=10.0.0
 # Search & Retrieval
 rank-bm25>=0.2.2
 
-# Dense retrieval (V0.1+)
+# Dense retrieval
 numpy>=1.24.0
 faiss-cpu>=1.7.4  # Use faiss-gpu if CUDA available
 requests>=2.28.0  # For API calls
 
-# Vision retrieval (V0.1+)
+# Vision retrieval (ColPali)
 torch>=2.0.0  # PyTorch for ColPali
 transformers>=4.35.0  # HuggingFace transformers
 # flash-attn>=2.3.0  # Optional: flash attention for ColPali (requires CUDA)
 
 # UI
-gradio>=4.0.0
+gradio==6.2.0  # Web interface
 httpx[socks]  # Required for gradio with SOCKS proxy
 
-# Optional: for real LLM integration
-# openai>=1.0.0
+# LLM/MLLM Integration
+openai>=1.0.0  # For vLLM OpenAI-compatible API
+
+# Development & Testing (optional)
+# pytest>=7.0.0
+# black>=23.0.0
+# ruff>=0.1.0

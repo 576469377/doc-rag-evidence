@@ -7,6 +7,14 @@ set -e
 # 清除代理设置（避免localhost访问问题）
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
 
+# 从 app.yaml 读取端口配置
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_LOADER="$SCRIPT_DIR/config_loader.py"
+
+OCR_PORT=$(python "$CONFIG_LOADER" ocr.endpoint | sed 's|.*:||')
+EMB_PORT=$(python "$CONFIG_LOADER" dense.endpoint | sed 's|.*:||')
+GEN_PORT=$(python "$CONFIG_LOADER" llm.endpoint | sed 's|.*:||')
+
 echo "🎨 启动 Doc RAG Evidence UI"
 echo "================================"
 
@@ -22,8 +30,8 @@ echo ""
 services_ok=true
 
 # 检查Generation服务（必需）
-echo -n "🔍 Generation服务 (端口8002): "
-if curl -s --max-time 5 http://localhost:8002/v1/models >/dev/null 2>&1; then
+echo -n "🔍 Generation服务 (端口$GEN_PORT): "
+if curl -s --max-time 5 http://localhost:$GEN_PORT/v1/models >/dev/null 2>&1; then
     echo "✅ 运行中"
 else
     echo "❌ 未运行"
@@ -34,16 +42,16 @@ else
 fi
 
 # 检查Embedding服务（可选）
-echo -n "🔍 Embedding服务 (端口8001): "
-if curl -s --max-time 3 http://localhost:8001/v1/models >/dev/null 2>&1; then
+echo -n "🔍 Embedding服务 (端口$EMB_PORT): "
+if curl -s --max-time 3 http://localhost:$EMB_PORT/v1/models >/dev/null 2>&1; then
     echo "✅ 运行中 (Dense检索可用)"
 else
     echo "⚠️  未运行 (仅BM25/ColPali可用)"
 fi
 
 # 检查OCR服务（可选）
-echo -n "🔍 OCR服务 (端口8000): "
-if curl -s --max-time 3 http://localhost:8000/v1/models >/dev/null 2>&1; then
+echo -n "🔍 OCR服务 (端口$OCR_PORT): "
+if curl -s --max-time 3 http://localhost:$OCR_PORT/v1/models >/dev/null 2>&1; then
     echo "✅ 运行中 (PDF导入可用)"
 else
     echo "⚠️  未运行 (PDF导入不可用)"

@@ -1,38 +1,58 @@
 #!/bin/bash
 # 停止所有vllm服务
 
+# 从 app.yaml 读取配置
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_LOADER="$SCRIPT_DIR/config_loader.py"
+
+OCR_PORT=$(python "$CONFIG_LOADER" ocr.endpoint 2>/dev/null | sed 's|.*:||')
+EMB_PORT=$(python "$CONFIG_LOADER" dense.endpoint 2>/dev/null | sed 's|.*:||')
+GEN_PORT=$(python "$CONFIG_LOADER" llm.endpoint 2>/dev/null | sed 's|.*:||')
+
+OCR_MODEL=$(python "$CONFIG_LOADER" ocr.model 2>/dev/null | sed 's|.*/||')
+EMB_MODEL=$(python "$CONFIG_LOADER" dense.model 2>/dev/null | sed 's|.*/||')
+GEN_MODEL=$(python "$CONFIG_LOADER" llm.model 2>/dev/null | sed 's|.*/||')
+
 echo "======================================================"
 echo "Stopping All vLLM Services"
 echo "======================================================"
+echo "配置端口: OCR=$OCR_PORT, Embedding=$EMB_PORT, Generation=$GEN_PORT"
+echo ""
 
 # 方法1: 通过端口号精确停止服务
 echo "Stopping services by port..."
 
-# 停止端口 8000 (OCR)
-OCR_PID=$(lsof -ti:8000 2>/dev/null)
-if [ -n "$OCR_PID" ]; then
-    echo "Stopping OCR service (port 8000, PID: $OCR_PID)..."
-    kill -9 $OCR_PID 2>/dev/null && echo "  ✅ Stopped" || echo "  ⚠️  Already stopped"
-else
-    echo "OCR service (port 8000): Not running"
+# 停止 OCR 服务
+if [ -n "$OCR_PORT" ]; then
+    OCR_PID=$(lsof -ti:$OCR_PORT 2>/dev/null)
+    if [ -n "$OCR_PID" ]; then
+        echo "Stopping OCR service ($OCR_MODEL, port $OCR_PORT, PID: $OCR_PID)..."
+        kill -9 $OCR_PID 2>/dev/null && echo "  ✅ Stopped" || echo "  ⚠️  Already stopped"
+    else
+        echo "OCR service ($OCR_MODEL, port $OCR_PORT): Not running"
+    fi
 fi
 
-# 停止端口 8001 (Embedding)
-EMBED_PID=$(lsof -ti:8001 2>/dev/null)
-if [ -n "$EMBED_PID" ]; then
-    echo "Stopping Embedding service (port 8001, PID: $EMBED_PID)..."
-    kill -9 $EMBED_PID 2>/dev/null && echo "  ✅ Stopped" || echo "  ⚠️  Already stopped"
-else
-    echo "Embedding service (port 8001): Not running"
+# 停止 Embedding 服务
+if [ -n "$EMB_PORT" ]; then
+    EMBED_PID=$(lsof -ti:$EMB_PORT 2>/dev/null)
+    if [ -n "$EMBED_PID" ]; then
+        echo "Stopping Embedding service ($EMB_MODEL, port $EMB_PORT, PID: $EMBED_PID)..."
+        kill -9 $EMBED_PID 2>/dev/null && echo "  ✅ Stopped" || echo "  ⚠️  Already stopped"
+    else
+        echo "Embedding service ($EMB_MODEL, port $EMB_PORT): Not running"
+    fi
 fi
 
-# 停止端口 8002 (Generation)
-GEN_PID=$(lsof -ti:8002 2>/dev/null)
-if [ -n "$GEN_PID" ]; then
-    echo "Stopping Generation service (port 8002, PID: $GEN_PID)..."
-    kill -9 $GEN_PID 2>/dev/null && echo "  ✅ Stopped" || echo "  ⚠️  Already stopped"
-else
-    echo "Generation service (port 8002): Not running"
+# 停止 Generation 服务
+if [ -n "$GEN_PORT" ]; then
+    GEN_PID=$(lsof -ti:$GEN_PORT 2>/dev/null)
+    if [ -n "$GEN_PID" ]; then
+        echo "Stopping Generation service ($GEN_MODEL, port $GEN_PORT, PID: $GEN_PID)..."
+        kill -9 $GEN_PID 2>/dev/null && echo "  ✅ Stopped" || echo "  ⚠️  Already stopped"
+    else
+        echo "Generation service ($GEN_MODEL, port $GEN_PORT): Not running"
+    fi
 fi
 
 # 方法2: 强制停止所有 vllm 相关进程

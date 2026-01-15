@@ -36,7 +36,8 @@ llm:
   model: "Qwen/Qwen3-VL-4B-Instruct"  # Model name for API (multimodal)
   model_path: "/workspace/cache/Qwen3-VL-4B-Instruct"  # Local model path
   endpoint: "http://localhost:8002"  # vLLM generation server
-  max_new_tokens: 1024
+  gpu: 3                  # GPU device ID
+  max_new_tokens: 2048
   temperature: 0.1
   top_p: 0.9
   citation_policy: "strict"  # strict | relaxed | none
@@ -52,6 +53,7 @@ ocr:
   model: "tencent/HunyuanOCR"       # HunyuanOCR model name
   model_path: "/workspace/cache/HunyuanOCR"  # Local model path
   endpoint: "http://localhost:8000"
+  gpu: 0                            # GPU device ID
   timeout: 300
   cache_enabled: true
 
@@ -61,7 +63,8 @@ dense:
   embedder_type: "vllm"             # vllm | sglang embedding API
   model: "Qwen/Qwen3-Embedding-0.6B"  # Model name
   model_path: "/workspace/cache/Qwen3-Embedding-0.6B"  # Local model path
-  endpoint: "http://localhost:8001" # vllm server on GPU 1
+  endpoint: "http://localhost:8001" # vllm server endpoint
+  gpu: 1                            # GPU device ID
   index_type: "Flat"                # Flat | IVF
   nlist: 100                        # IVF clusters
   nprobe: 10                        # IVF search clusters
@@ -71,7 +74,8 @@ dense:
 colpali:
   enabled: true                     # Enable vision retrieval
   model: "/workspace/cache/tomoro-colqwen3-embed-4b"  # ColQwen3 local model
-  device: "cuda:2"                  # CUDA device for model (GPU 2 - GPU 0/1 occupied)
+  device: "cuda:2"                  # CUDA device for model
+  gpu: 2                            # GPU device ID
   max_global_pool: 100              # Coarse stage top-N
   cache_dir: "data/cache/colpali"   # Embedding cache
 

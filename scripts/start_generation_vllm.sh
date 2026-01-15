@@ -5,8 +5,14 @@
 # 清除代理设置（避免localhost访问问题）
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
 
-MODEL_PATH="/workspace/cache/Qwen3-VL-4B-Instruct"
-MODEL_NAME="Qwen/Qwen3-VL-4B-Instruct"
+# 从 app.yaml 读取配置
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_LOADER="$SCRIPT_DIR/config_loader.py"
+
+MODEL_PATH=$(python "$CONFIG_LOADER" llm.model_path)
+MODEL_NAME=$(python "$CONFIG_LOADER" llm.model)
+PORT=$(python "$CONFIG_LOADER" llm.endpoint | sed 's|.*:||')
+GPU=$(python "$CONFIG_LOADER" llm.gpu)
 
 # Check if model exists
 if [ ! -d "$MODEL_PATH" ]; then
@@ -18,16 +24,16 @@ fi
 echo "Starting vLLM generation server..."
 echo "Model: $MODEL_NAME"
 echo "Path: $MODEL_PATH"
-echo "Port: 8002"
-echo "GPU: GPU 3 (CUDA_VISIBLE_DEVICES=3) - dedicated"
+echo "Port: $PORT"
+echo "GPU: $GPU"
 
-# Start vLLM server on GPU 3 (completely free)
-export CUDA_VISIBLE_DEVICES=3
+# Start vLLM server
+export CUDA_VISIBLE_DEVICES=$GPU
 python -m vllm.entrypoints.openai.api_server \
     --model "$MODEL_PATH" \
     --served-model-name "$MODEL_NAME" \
     --host 0.0.0.0 \
-    --port 8002 \
+    --port "$PORT" \
     --max-model-len 32768 \
     --tensor-parallel-size 1 \
     --gpu-memory-utilization 0.80 \
