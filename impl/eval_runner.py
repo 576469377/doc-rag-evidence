@@ -33,11 +33,30 @@ from impl.metrics import RAGMetrics
 class EvalRunner:
     """Batch evaluation runner with comprehensive metrics."""
 
-    def __init__(self, pipeline: Pipeline, enable_metrics: bool = True):
+    def __init__(self, pipeline: Pipeline, enable_metrics: bool = True, enable_vl_scoring: bool = False, config: Optional[AppConfig] = None):
         self.pipeline = pipeline
         self.enable_metrics = enable_metrics
+        self.enable_vl_scoring = enable_vl_scoring
+        self.vl_scorer = None
+        self.config = config
+        
         if enable_metrics:
             self.rag_metrics = RAGMetrics()
+        
+        if enable_vl_scoring:
+            try:
+                from impl.eval_vl_scorer import VLAnswerScorer
+                # Use provided config or try to get from pipeline
+                eval_config = config or getattr(pipeline, 'config', None)
+                if eval_config:
+                    self.vl_scorer = VLAnswerScorer(eval_config)
+                    print("✅ VL Answer Scorer initialized")
+                else:
+                    print("⚠️ No config available, VL scoring disabled")
+                    self.enable_vl_scoring = False
+            except Exception as e:
+                print(f"⚠️ Failed to initialize VL scorer: {e}")
+                self.enable_vl_scoring = False
 
     def evaluate(self, dataset: EvalDataset, config: AppConfig) -> EvalReport:
         """
@@ -88,6 +107,7 @@ class EvalRunner:
                     qid=item.qid,
                     question=item.question,
                     answer_pred=answer_pred,
+                    answer_gt=item.answer_gt if hasattr(item, 'answer_gt') else None,
                     cited_units=cited_units,
                     latency_ms=elapsed_ms,
                     status_ok=status_ok,
@@ -124,7 +144,7 @@ class EvalRunner:
 
             rows.append(row)
 
-        # Compute metrics
+        # Compute metrics (initialize extra_metrics BEFORE VL scoring)
         avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
         
         # Aggregate detailed metrics
@@ -137,6 +157,51 @@ class EvalRunner:
             aggregated = self.rag_metrics.aggregate_metrics(detailed_metrics)
             extra_metrics.update(aggregated)
 
+        # Run VL scoring if enabled and ground truth available
+        if self.enable_vl_scoring and self.vl_scorer:
+            print("\n🤖 Running VL-based answer evaluation...")
+            vl_scores_computed = 0
+            
+            for row in rows:
+                if row.status_ok and row.answer_gt and row.answer_pred:
+                    try:
+                        score_result = self.vl_scorer.score_answer(
+                            question=row.question,
+                            answer_pred=row.answer_pred,
+                            answer_gt=row.answer_gt
+                        )
+                        
+                        if score_result:
+                            row.vl_score = score_result.score
+                            row.vl_correctness = score_result.correctness
+                            row.vl_reasoning = score_result.reasoning
+                            vl_scores_computed += 1
+                            print(f"  ✅ {row.qid}: {score_result.score:.1f}/10 ({score_result.correctness})")
+                    except Exception as e:
+                        print(f"  ⚠️ {row.qid}: VL scoring failed - {e}")
+            
+            if vl_scores_computed > 0:
+                # Compute VL metrics
+                vl_scores = [r.vl_score for r in rows if r.vl_score is not None]
+                avg_vl_score = sum(vl_scores) / len(vl_scores)
+                
+                correct_count = sum(1 for r in rows if r.vl_correctness == "correct")
+                partial_count = sum(1 for r in rows if r.vl_correctness == "partial")
+                incorrect_count = sum(1 for r in rows if r.vl_correctness == "incorrect")
+                
+                extra_metrics["vl_avg_score"] = avg_vl_score
+                extra_metrics["vl_correct_rate"] = correct_count / vl_scores_computed
+                extra_metrics["vl_partial_rate"] = partial_count / vl_scores_computed
+                extra_metrics["vl_incorrect_rate"] = incorrect_count / vl_scores_computed
+                extra_metrics["vl_scored_count"] = vl_scores_computed
+                
+                print(f"\n📊 VL Evaluation Summary:")
+                print(f"  Average Score: {avg_vl_score:.2f}/10")
+                print(f"  Correct: {correct_count}/{vl_scores_computed} ({correct_count/vl_scores_computed:.1%})")
+                print(f"  Partial: {partial_count}/{vl_scores_computed} ({partial_count/vl_scores_computed:.1%})")
+                print(f"  Incorrect: {incorrect_count}/{vl_scores_computed} ({incorrect_count/vl_scores_computed:.1%})")
+
+        # Create metrics object
         metrics = EvalMetrics(
             n=len(dataset.items),
             exact_match=extra_metrics.get("generation_em"),
@@ -186,20 +251,26 @@ class EvalRunner:
         # Save predictions.csv
         csv_path = report_dir / "predictions.csv"
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=[
-                "qid", "question", "answer_pred", "cited_units", 
-                "latency_ms", "status_ok", "error_type"
-            ])
+            fieldnames = [
+                "qid", "question", "answer_pred", "answer_gt", "cited_units", 
+                "latency_ms", "status_ok", "error_type",
+                "vl_score", "vl_correctness", "vl_reasoning"
+            ]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for row in rows:
                 writer.writerow({
                     "qid": row.qid,
                     "question": row.question,
                     "answer_pred": row.answer_pred,
+                    "answer_gt": row.answer_gt or "",
                     "cited_units": ",".join(row.cited_units),
                     "latency_ms": row.latency_ms,
                     "status_ok": row.status_ok,
-                    "error_type": row.error_type or ""
+                    "error_type": row.error_type or "",
+                    "vl_score": f"{row.vl_score:.2f}" if row.vl_score is not None else "",
+                    "vl_correctness": row.vl_correctness or "",
+                    "vl_reasoning": row.vl_reasoning or ""
                 })
         artifact_paths["predictions_csv"] = str(csv_path)
 

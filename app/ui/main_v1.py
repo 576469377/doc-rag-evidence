@@ -401,9 +401,31 @@ class DocRAGUIV1:
             label="Retrieved Evidence",
             interactive=False
         )
+        
+        # Image gallery for displaying page images (visible in image mode)
+        with gr.Accordion("🖼️ Page Images", open=True, visible=False) as image_gallery_section:
+            gr.Markdown("**检索到的页面图片** (按相关性排序)")
+            page_images = gr.Gallery(
+                label="Page Images",
+                show_label=False,
+                columns=3,
+                rows=2,
+                height="auto",
+                object_fit="contain"
+            )
 
         query_id_box = gr.Textbox(label="Query ID (for traceability)", interactive=False)
 
+        # Toggle image gallery visibility based on evidence mode
+        def toggle_image_gallery(mode):
+            return gr.update(visible=(mode == "image"), open=(mode == "image"))
+        
+        evidence_mode.change(
+            fn=toggle_image_gallery,
+            inputs=[evidence_mode],
+            outputs=[image_gallery_section]
+        )
+        
         # Event handler
         query_btn.click(
             fn=self._handle_query,
@@ -417,12 +439,20 @@ class DocRAGUIV1:
                 retriever_2,
                 weight_1
             ],
-            outputs=[answer_box, evidence_display, query_id_box]
+            outputs=[answer_box, evidence_display, query_id_box, page_images]
         )
 
     def _build_eval_tab(self):
         """Build evaluation tab."""
         gr.Markdown("## Batch Evaluation")
+        gr.Markdown("""
+        ### 📋 评估流程说明
+        1. **上传CSV文件**：包含 `qid`, `question`, `answer_gt` 三列
+        2. **系统自动问答**：对每个question运行完整RAG pipeline
+        3. **生成预测答案**：得到系统的predicted answer
+        4. **VL自动评分**：使用Qwen3-VL对比predicted和ground truth
+        5. **输出详细报告**：包含评分、理由和统计指标
+        """)
 
         with gr.Row():
             with gr.Column():
@@ -438,6 +468,21 @@ class DocRAGUIV1:
                     value=available_modes[0],
                     label="Retrieval Mode for Evaluation",
                     info="单一检索 or Hybrid（混合检索，可在下方配置）"
+                )
+                
+                # Evidence format selector
+                eval_evidence_mode = gr.Radio(
+                    choices=["text", "image"],
+                    value="text",
+                    label="Evidence Format",
+                    info="text: 使用文本snippet | image: 使用完整页面图片（更准确，适合VL模型）"
+                )
+                
+                # VL-based answer scoring option
+                enable_vl_scoring = gr.Checkbox(
+                    label="Enable VL Answer Scoring",
+                    value=True,
+                    info="✨ 使用Qwen3-VL自动评估：对比系统生成答案和ground truth，给出0-10分及详细评价"
                 )
                 
                 # Hybrid fusion settings for evaluation - only visible for hybrid mode
@@ -515,6 +560,8 @@ class DocRAGUIV1:
             inputs=[
                 eval_file, 
                 eval_mode,
+                eval_evidence_mode,
+                enable_vl_scoring,
                 eval_fusion_method,
                 eval_retriever_1,
                 eval_retriever_2,
@@ -765,11 +812,11 @@ class DocRAGUIV1:
         retriever_1: str = "bm25",
         retriever_2: str = "dense",
         weight_1: float = 0.5
-    ) -> Tuple[str, List, str]:
+    ) -> Tuple[str, List, str, List]:
         """Handle query with selected retrieval mode and evidence format."""
         try:
             if not question:
-                return "Please enter a question", [], ""
+                return "Please enter a question", [], "", []
             
             # Handle Hybrid mode - dynamically create retriever
             if retrieval_mode == "hybrid":
@@ -777,7 +824,7 @@ class DocRAGUIV1:
                 
                 # Validate: two different retrievers
                 if retriever_1 == retriever_2:
-                    return f"⚠️ 请选择两个不同的检索器！当前都选择了 {retriever_1}", [], ""
+                    return f"⚠️ 请选择两个不同的检索器！当前都选择了 {retriever_1}", [], "", [], []
                 
                 # Load retrievers (including lazy-loaded ColPali)
                 retriever_objs = {}
@@ -795,12 +842,12 @@ class DocRAGUIV1:
                                 self.retrievers["colpali"] = colpali_retriever
                                 print(f"✅ ColPali 模型加载完成")
                             except Exception as e:
-                                return f"❌ ColPali 加载失败: {e}", [], ""
+                                return f"❌ ColPali 加载失败: {e}", [], "", []
                         else:
-                            return f"❌ ColPali 未配置", [], ""
+                            return f"❌ ColPali 未配置", [], "", []
                     
                     if ret_name not in self.retrievers or self.retrievers[ret_name] is None:
-                        return f"⚠️ 检索器 '{ret_name}' 未找到，请先构建索引", [], ""
+                        return f"⚠️ 检索器 '{ret_name}' 未找到，请先构建索引", [], "", []
                     
                     retriever_objs[ret_name] = self.retrievers[ret_name]
                 
@@ -834,12 +881,12 @@ class DocRAGUIV1:
                             self.retrievers["colpali"] = retriever
                             print(f"✅ ColPali 模型加载完成")
                         except Exception as e:
-                            return f"❌ ColPali 加载失败: {e}", [], ""
+                            return f"❌ ColPali 加载失败: {e}", [], "", []
                     else:
-                        return "❌ ColPali 未配置", [], ""
+                        return "❌ ColPali 未配置", [], "", []
                 
                 if retriever is None:
-                    return f"❌ 检索器 '{retrieval_mode}' 不可用，请先构建索引", [], ""
+                    return f"❌ 检索器 '{retrieval_mode}' 不可用，请先构建索引", [], "", []
 
             
             # Switch generator based on evidence mode
@@ -850,7 +897,7 @@ class DocRAGUIV1:
                     generator = QwenVLGenerator(self.config, use_images=True, store=self.store)
                     print(f"🖼️  Using image-based generation")
                 except Exception as e:
-                    return f"Failed to load image generator: {e}", [], ""
+                    return f"Failed to load image generator: {e}", [], "", [], []
             else:
                 # Use existing text-based generator (or create new one with store)
                 try:
@@ -918,23 +965,40 @@ class DocRAGUIV1:
             else:
                 print(f"✅ Generated answer: {answer[:100]}...")
             
-            return answer, evidence_rows, query_input.query_id
+            # Load page images if in image mode
+            page_image_paths = []
+            if evidence_mode == "image" and result.evidence and result.evidence.evidence:
+                for ev in result.evidence.evidence:
+                    # Load page artifact to get image path
+                    artifact = self.store.load_page_artifact(ev.doc_id, ev.page_id)
+                    if artifact and artifact.image_path:
+                        image_path = Path(artifact.image_path)
+                        if image_path.exists():
+                            page_image_paths.append((str(image_path), f"{ev.doc_id} - Page {ev.page_id}"))
+                        else:
+                            print(f"⚠️ Image not found: {image_path}")
+                    else:
+                        print(f"⚠️ No image for {ev.doc_id} page {ev.page_id}")
+            
+            return answer, evidence_rows, query_input.query_id, page_image_paths
             
         except Exception as e:
             import traceback
             error_msg = f"Error: {str(e)}\n{traceback.format_exc()}"
-            return error_msg, [], ""
+            return error_msg, [], "", []
 
     def _handle_eval(
         self,
         eval_file,
         eval_mode: str,
+        eval_evidence_mode: str = "text",
+        enable_vl_scoring: bool = True,
         fusion_method: str = "rrf",
         retriever_1: str = "bm25",
         retriever_2: str = "dense",
         weight_1: float = 0.5
     ) -> Tuple[str, dict, Optional[str], Optional[str]]:
-        """Handle batch evaluation with custom hybrid configuration."""
+        """Handle batch evaluation with custom hybrid configuration and VL scoring."""
         try:
             if eval_file is None:
                 return "Error: No evaluation file uploaded", {}, None, None
@@ -989,38 +1053,90 @@ class DocRAGUIV1:
             else:
                 retriever = self.retrievers.get(eval_mode)
                 
+                # Lazy load ColPali if needed (same as in _handle_query)
+                if eval_mode == "colpali" and retriever is None:
+                    if hasattr(self, "_colpali_config"):
+                        try:
+                            print(f"⏳ 首次使用 ColPali (评估模式)，正在加载模型...")
+                            from impl.index_colpali import ColPaliRetriever
+                            retriever = ColPaliRetriever.load(
+                                self._colpali_config["index_dir"],
+                                model_name=self._colpali_config["model_name"],
+                                device=self._colpali_config["device"]
+                            )
+                            self.retrievers["colpali"] = retriever
+                            print(f"✅ ColPali 模型加载完成")
+                        except Exception as e:
+                            return f"❌ ColPali 加载失败: {e}", {}, None, None
+                    else:
+                        return "❌ ColPali 未配置", {}, None, None
+                
                 if retriever is None:
                     return f"❌ 检索器 '{eval_mode}' 不可用，请先构建索引", {}, None, None
             
-            self.pipeline.retriever = retriever
+            # Switch generator based on evidence mode
+            if eval_evidence_mode == "image":
+                try:
+                    from impl.generator_qwen_vl import QwenVLGenerator
+                    generator = QwenVLGenerator(self.config, use_images=True, store=self.store)
+                    print(f"🖼️ Evaluation using image-based generation")
+                except Exception as e:
+                    return f"Failed to load image generator: {e}", {}, None, None
+            else:
+                try:
+                    from impl.generator_qwen_vl import QwenVLGenerator
+                    generator = QwenVLGenerator(self.config, use_images=False, store=self.store)
+                    print(f"📝 Evaluation using text-based generation")
+                except Exception as e:
+                    generator = self.generator
+                    print(f"📝 Evaluation using default text-based generation")
             
-            # Run evaluation
-            from impl.eval_runner import load_dataset_from_csv, load_dataset_from_json
+            # Update pipeline with selected retriever and generator
+            self.pipeline.retriever = retriever
+            self.pipeline.generator = generator
+            
+            # Create eval runner with VL scoring if enabled
+            from impl.eval_runner import EvalRunner, load_dataset_from_csv, load_dataset_from_json
+            
+            eval_runner = EvalRunner(
+                pipeline=self.pipeline,
+                enable_metrics=True,
+                enable_vl_scoring=enable_vl_scoring,
+                config=self.config
+            )
             
             if eval_file.name.endswith('.csv'):
                 dataset = load_dataset_from_csv(eval_file.name)
             else:
                 dataset = load_dataset_from_json(eval_file.name)
             
-            report = self.eval_runner.run(dataset, self.config)
+            # Run evaluation (use 'evaluate' method, not 'run')
+            report = eval_runner.evaluate(dataset, self.config)
             
-            # Save results
-            report_dir = Path(self.config.reports_dir) / f"eval_{uuid.uuid4().hex[:8]}"
-            report_dir.mkdir(parents=True, exist_ok=True)
-            
-            csv_path = str(report_dir / "predictions.csv")
-            json_path = str(report_dir / "report.json")
-            
-            self.eval_runner.save_results(report, report_dir)
+            # Extract artifact paths from report
+            csv_path = report.artifact_paths.get("predictions_csv")
+            json_path = report.artifact_paths.get("report")
             
             status = f"✅ Evaluation complete\n"
-            status += f"Mode: {eval_mode}\n"
+            status += f"Retrieval Mode: {eval_mode}\n"
+            status += f"Evidence Mode: {eval_evidence_mode}\n"
+            if enable_vl_scoring:
+                status += f"VL Scoring: Enabled\n"
             if "hybrid" in eval_mode:
-                status += f"Config: {retriever_1}({weight_1:.2f}) + {retriever_2}({weight_2:.2f}), {fusion_method}\n"
-            status += f"Samples: {len(dataset)}\n"
-            status += f"Results saved to: {report_dir}"
+                weight_2 = 1.0 - weight_1
+                status += f"Hybrid Config: {retriever_1}({weight_1:.2f}) + {retriever_2}({weight_2:.2f}), {fusion_method}\n"
+            status += f"Samples: {len(dataset.items)}\n"
             
-            return status, report.metrics, csv_path, json_path
+            # Add VL metrics to status if available
+            if enable_vl_scoring and "vl_avg_score" in report.metrics.extra:
+                status += f"\n📊 VL Evaluation:\n"
+                status += f"  Average Score: {report.metrics.extra['vl_avg_score']:.2f}/10\n"
+                status += f"  Correct: {report.metrics.extra['vl_correct_rate']:.1%}\n"
+                status += f"  Partial: {report.metrics.extra['vl_partial_rate']:.1%}\n"
+            
+            status += f"\nResults saved to: {csv_path}"
+            
+            return status, report.metrics.extra, csv_path, json_path
             
         except Exception as e:
             import traceback

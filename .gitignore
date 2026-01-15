@@ -1,6 +1,13 @@
 data/
 docs/
+
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Logs and databases
 *.log
 *.sqlite3
 .vscode/

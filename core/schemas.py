@@ -281,6 +281,11 @@ class EvalRow(BaseModel):
     latency_ms: int = 0
     status_ok: bool = True
     error_type: Optional[str] = None
+    # VL scoring fields
+    answer_gt: Optional[str] = None
+    vl_score: Optional[float] = None  # 0-10
+    vl_correctness: Optional[str] = None  # correct/partial/incorrect
+    vl_reasoning: Optional[str] = None
 
 
 class EvalReport(BaseModel):
