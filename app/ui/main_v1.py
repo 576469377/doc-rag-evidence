@@ -147,11 +147,12 @@ class DocRAGUIV1:
                 print(f"⚠️  ColPali index not found at {colpali_index_dir}")
         
         # Dense-VL (multimodal embedding, lazy load like ColPali)
-        self.retrievers["dense_vl"] = None
         if self.config.dense_vl.get("enabled"):
             dense_vl_index_name = "dense_vl_default"
             dense_vl_index_dir = indices_dir / dense_vl_index_name
             if dense_vl_index_dir.exists():
+                # Register as available with lazy loading
+                self.retrievers["dense_vl"] = None  # Placeholder
                 self._dense_vl_config = {
                     "index_dir": dense_vl_index_dir,
                     "model_path": self.config.dense_vl["model_path"],
@@ -162,10 +163,7 @@ class DocRAGUIV1:
                 }
                 print(f"✅ Dense-VL index available at {dense_vl_index_dir} (延迟加载模式)")
             else:
-                self._dense_vl_config = None
                 print(f"⚠️  Dense-VL index not found at {dense_vl_index_dir}")
-        else:
-            self._dense_vl_config = None
         
         # Note: Hybrid retrievers are created dynamically in UI based on user selection
         # No pre-configured hybrid combinations needed
@@ -261,6 +259,14 @@ class DocRAGUIV1:
     def _build_document_tab(self):
         """Build document management tab."""
         gr.Markdown("## Upload and Manage Documents")
+        
+        gr.Markdown("""
+        ### 💡 Tips for Large Batch Upload
+        - **Batch Processing**: Files are automatically processed in batches of 50 to avoid memory issues
+        - **Progress Tracking**: Real-time progress updates every 10 files
+        - **OCR Performance**: With OCR enabled, expect ~10-30s per file depending on pages and quality
+        - **Recommended**: For 1000+ files, consider uploading in multiple sessions or use command-line tools
+        """)
 
         # Section 1: Upload & Ingest
         with gr.Row():
@@ -274,7 +280,7 @@ class DocRAGUIV1:
                 )
                 use_ocr = gr.Checkbox(label="Use OCR (slower, better quality)", value=False)
                 upload_btn = gr.Button("📤 Ingest Document(s)", variant="primary")
-                upload_status = gr.Textbox(label="Ingestion Status", lines=8, interactive=False)
+                upload_status = gr.Textbox(label="Ingestion Status", lines=10, interactive=False)
 
             with gr.Column():
                 gr.Markdown("### 📚 Document List")
@@ -326,7 +332,8 @@ class DocRAGUIV1:
         upload_btn.click(
             fn=self._handle_batch_upload,
             inputs=[pdf_files, use_ocr],
-            outputs=[upload_status, doc_list]
+            outputs=[upload_status, doc_list],
+            show_progress=True
         )
 
         refresh_btn.click(
@@ -668,75 +675,121 @@ class DocRAGUIV1:
 
     # ========== Event Handlers ==========
 
-    def _handle_batch_upload(self, pdf_files, use_ocr: bool) -> Tuple[str, List]:
-        """Handle batch PDF upload and ingestion."""
+    def _handle_batch_upload(self, pdf_files, use_ocr: bool) -> Generator[Tuple[str, List], None, None]:
+        """Handle batch PDF upload and ingestion with streaming progress."""
         try:
+            print(f"[DEBUG] _handle_batch_upload called with {len(pdf_files) if pdf_files else 0} files")
+            
             if pdf_files is None or len(pdf_files) == 0:
-                return "❌ Error: No files uploaded", self._get_doc_list()
+                print("[DEBUG] No files uploaded")
+                yield "❌ Error: No files uploaded", self._get_doc_list()
+                return
             
             # Handle single file or multiple files
             if not isinstance(pdf_files, list):
                 pdf_files = [pdf_files]
             
             total_files = len(pdf_files)
-            status_lines = []
-            status_lines.append(f"📦 Batch Upload: {total_files} file(s)")
-            status_lines.append("=" * 50)
             
-            if use_ocr:
-                status_lines.append("⚙️ OCR enabled - processing may take time...")
-            status_lines.append("")
+            # Warning for large batches
+            if total_files > 100:
+                status = f"⚠️ Large batch detected: {total_files} files\n"
+                status += "📊 Processing in batches to avoid memory issues...\n"
+                status += "=" * 50 + "\n\n"
+                yield status, self._get_doc_list()
+            else:
+                status = f"📦 Batch Upload: {total_files} file(s)\n"
+                status += "=" * 50 + "\n"
+                if use_ocr:
+                    status += "⚙️ OCR enabled - processing may take time...\n"
+                status += "\n"
+                yield status, self._get_doc_list()
             
-            # Process each file
+            # Process in batches to avoid memory issues
+            BATCH_SIZE = 50  # Process 50 files at a time
             success_count = 0
             failed_count = 0
             ingested_docs = []
             
-            for idx, pdf_file in enumerate(pdf_files, 1):
-                try:
-                    filename = Path(pdf_file.name).name
-                    status_lines.append(f"[{idx}/{total_files}] Processing: {filename}")
-                    
-                    # Ingest with V1 ingestor
-                    ingestor = PDFIngestorV1(
-                        config=self.config,
-                        store=self.store,
-                        use_ocr=use_ocr
-                    )
-                    
-                    meta = ingestor.ingest(pdf_file.name)
-                    
-                    status_lines.append(f"  ✅ Success: {meta.doc_id} ({meta.page_count} pages)")
-                    ingested_docs.append(meta.doc_id)
-                    success_count += 1
-                    
-                except Exception as e:
-                    status_lines.append(f"  ❌ Failed: {str(e)}")
-                    failed_count += 1
-                
-                status_lines.append("")  # Blank line between files
+            import time
+            start_time = time.time()
             
-            # Summary
-            status_lines.append("=" * 50)
-            status_lines.append(f"📊 Summary:")
-            status_lines.append(f"  ✅ Success: {success_count}/{total_files}")
-            status_lines.append(f"  ❌ Failed: {failed_count}/{total_files}")
+            for batch_idx in range(0, total_files, BATCH_SIZE):
+                batch_end = min(batch_idx + BATCH_SIZE, total_files)
+                batch_files = pdf_files[batch_idx:batch_end]
+                
+                if total_files > BATCH_SIZE:
+                    status += f"\n🔄 Processing batch {batch_idx//BATCH_SIZE + 1}/{(total_files + BATCH_SIZE - 1)//BATCH_SIZE}\n"
+                    status += f"   Files {batch_idx + 1}-{batch_end} of {total_files}\n\n"
+                    yield status, self._get_doc_list()
+                
+                # Process each file in the batch
+                for idx, pdf_file in enumerate(batch_files, batch_idx + 1):
+                    try:
+                        filename = Path(pdf_file.name).name
+                        status += f"[{idx}/{total_files}] Processing: {filename}\n"
+                        yield status, self._get_doc_list()
+                        
+                        # Ingest with V1 ingestor
+                        ingestor = PDFIngestorV1(
+                            config=self.config,
+                            store=self.store,
+                            use_ocr=use_ocr
+                        )
+                        
+                        meta = ingestor.ingest(pdf_file.name)
+                        
+                        status += f"  ✅ Success: {meta.doc_id} ({meta.page_count} pages)\n"
+                        ingested_docs.append(meta.doc_id)
+                        success_count += 1
+                        
+                        # Show progress every 10 files
+                        if idx % 10 == 0:
+                            elapsed = time.time() - start_time
+                            avg_time = elapsed / idx
+                            remaining = (total_files - idx) * avg_time
+                            status += f"\n📊 Progress: {idx}/{total_files} ({idx*100//total_files}%)"
+                            status += f" | Elapsed: {elapsed:.0f}s | ETA: {remaining:.0f}s\n\n"
+                        
+                        yield status, self._get_doc_list()
+                        
+                    except Exception as e:
+                        status += f"  ❌ Failed: {str(e)}\n"
+                        failed_count += 1
+                        yield status, self._get_doc_list()
+                    
+                    status += "\n"
+                
+                # Clean up batch resources
+                import gc
+                gc.collect()
+            
+            # Final summary
+            elapsed_total = time.time() - start_time
+            status += "=" * 50 + "\n"
+            status += f"📊 Final Summary:\n"
+            status += f"  ✅ Success: {success_count}/{total_files}\n"
+            status += f"  ❌ Failed: {failed_count}/{total_files}\n"
+            status += f"  ⏱️ Total time: {elapsed_total:.0f}s ({elapsed_total/total_files:.1f}s per file)\n"
             
             if success_count > 0:
-                status_lines.append(f"\n  Ingested IDs: {', '.join(ingested_docs)}")
-                status_lines.append("\n⚠️ Next Step: Build indices below to enable retrieval")
+                status += f"\n  First 10 IDs: {', '.join(ingested_docs[:10])}"
+                if len(ingested_docs) > 10:
+                    status += f" ... and {len(ingested_docs) - 10} more"
+                status += "\n\n⚠️ Next Step: Build indices below to enable retrieval"
             
-            return "\n".join(status_lines), self._get_doc_list()
+            yield status, self._get_doc_list()
             
         except Exception as e:
             import traceback
             error_msg = f"❌ Batch Upload Error: {str(e)}\n\nDetails:\n{traceback.format_exc()}"
-            return error_msg, self._get_doc_list()
+            yield error_msg, self._get_doc_list()
     
-    def _handle_upload(self, pdf_file, use_ocr: bool) -> Tuple[str, List]:
+    def _handle_upload(self, pdf_file, use_ocr: bool) -> Generator[Tuple[str, List], None, None]:
         """Handle single PDF upload (legacy, kept for compatibility)."""
         # Redirect to batch handler
-        return self._handle_batch_upload([pdf_file] if pdf_file else None, use_ocr)
+        for result in self._handle_batch_upload([pdf_file] if pdf_file else None, use_ocr):
+            yield result
 
     def _handle_build_indices(
         self,
