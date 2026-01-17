@@ -17,6 +17,7 @@ from infra.store_local import DocumentStoreLocal
 from impl.index_bm25 import BM25IndexerRetriever
 from impl.index_dense import DenseIndexerRetriever, SGLangEmbedder
 from impl.index_colpali import ColPaliRetriever
+from impl.index_dense_vl import VLEmbedder, DenseVLRetriever
 
 
 def load_config(config_path: str) -> AppConfig:
@@ -182,6 +183,60 @@ def build_colpali_index(config: AppConfig, store: DocumentStoreLocal):
     print(f"ColPali index saved to {index_dir}")
 
 
+def build_dense_vl_index(config: AppConfig, store: DocumentStoreLocal):
+    """Build dense-vl multimodal embedding index."""
+    print("\n=== Building Dense-VL Multimodal Index ===")
+    
+    dense_vl_config = config.dense_vl
+    if not dense_vl_config.get("enabled"):
+        print("Dense-VL retrieval not enabled in config. Set dense_vl.enabled=true")
+        return
+    
+    # Collect page images with captions
+    page_images = []
+    docs = store.list_documents()
+    
+    for meta in docs:
+        doc_id = meta.doc_id
+        
+        for page_id in range(meta.page_count):
+            artifact = store.load_page_artifact(doc_id, page_id)
+            if artifact and artifact.image_path:
+                # Use page text as caption
+                caption = artifact.text.text if artifact.text else ""
+                page_images.append((doc_id, page_id, artifact.image_path, caption))
+    
+    print(f"Found {len(page_images)} page images")
+    
+    if not page_images:
+        print("No page images found. Run ingestion with page rendering first.")
+        return
+    
+    # Create embedder
+    embedder = VLEmbedder(
+        endpoint=dense_vl_config["endpoint"],
+        model=dense_vl_config["model"],
+        batch_size=dense_vl_config.get("batch_size", 16)
+    )
+    
+    # Create retriever
+    retriever = DenseVLRetriever(
+        embedder=embedder,
+        index_type=dense_vl_config.get("index_type", "Flat"),
+        nlist=dense_vl_config.get("nlist", 100),
+        nprobe=dense_vl_config.get("nprobe", 10)
+    )
+    
+    # Build index
+    retriever.build_index(page_images)
+    
+    # Persist
+    index_dir = Path(config.indices_dir) / "dense_vl"
+    retriever.persist(index_dir)
+    
+    print(f"Dense-VL index saved to {index_dir}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build retrieval indices")
     parser.add_argument(
@@ -206,6 +261,11 @@ def main():
         help="Build ColPali vision index"
     )
     parser.add_argument(
+        "--dense-vl",
+        action="store_true",
+        help="Build Dense-VL multimodal index"
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help="Build all enabled indices"
@@ -220,7 +280,7 @@ def main():
     store = DocumentStoreLocal(config)
     
     # Determine what to build
-    build_all = args.all or not (args.bm25 or args.dense or args.colpali)
+    build_all = args.all or not (args.bm25 or args.dense or args.colpali or args.dense_vl)
     
     try:
         if build_all or args.bm25:
@@ -237,6 +297,12 @@ def main():
                 build_colpali_index(config, store)
             else:
                 print("\nSkipping ColPali index (not enabled)")
+        
+        if build_all or args.dense_vl:
+            if config.dense_vl.get("enabled") or args.dense_vl:
+                build_dense_vl_index(config, store)
+            else:
+                print("\nSkipping Dense-VL index (not enabled)")
         
         print("\n=== Index building complete ===")
         

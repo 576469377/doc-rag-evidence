@@ -25,7 +25,7 @@ echo "Path: $MODEL_PATH"
 echo "Port: $PORT"
 echo "GPU: $GPU"
 
-# Start vLLM server
+# Start vLLM server (shared GPU with dense_vl, use 0.45 to prevent OOM)
 export CUDA_VISIBLE_DEVICES=$GPU
 python -m vllm.entrypoints.openai.api_server \
     --model "$MODEL_PATH" \
@@ -34,5 +34,5 @@ python -m vllm.entrypoints.openai.api_server \
     --port "$PORT" \
     --max-model-len 32768 \
     --tensor-parallel-size 1 \
-    --gpu-memory-utilization 0.90 \
+    --gpu-memory-utilization 0.45 \
     --trust-remote-code

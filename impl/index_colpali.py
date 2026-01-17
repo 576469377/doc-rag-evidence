@@ -79,13 +79,30 @@ class ColPaliRetriever:
             trust_remote_code=True,
             max_num_visual_tokens=1280  # ColQwen3 parameter
         )
-        self.model = AutoModel.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            torch_dtype=torch.bfloat16,
-            attn_implementation="flash_attention_2",  # Requires flash-attn
-            device_map=device
-        ).eval()
+        
+        # Try to use Flash Attention 2 for speedup
+        try:
+            self.model = AutoModel.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+                attn_implementation="flash_attention_2",
+                device_map=device
+            ).eval()
+            print("  ✅ Using Flash Attention 2 (fast)")
+        except Exception as e:
+            # Fallback to standard attention if flash-attn not available
+            if "flash_attn" in str(e).lower() or "flash" in str(e).lower():
+                print("  ⚠️  Flash Attention 2 not available, using standard attention (slower)")
+                print("     To enable: pip install flash-attn --no-build-isolation")
+                self.model = AutoModel.from_pretrained(
+                    model_name,
+                    trust_remote_code=True,
+                    torch_dtype=torch.bfloat16,
+                    device_map=device
+                ).eval()
+            else:
+                raise
         
         # Vector store
         self.store: Optional[PageVectorStore] = None

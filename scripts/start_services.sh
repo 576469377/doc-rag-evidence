@@ -30,7 +30,7 @@ MODE="${1:-all}"  # 默认启动所有服务
 echo "🚀 启动 Doc RAG Evidence 后台服务"
 echo "================================"
 echo "模式: $MODE"
-echo "端口配置: OCR=$OCR_PORT, Embedding=$EMB_PORT, Generation=$GEN_PORT"
+echo "端口配置: OCR=$OCR_PORT, Dense=$EMB_PORT, Dense-VL=$VL_EMB_PORT, Generation=$GEN_PORT"
 
 # 激活conda环境
 source /workspace/program/miniconda3/etc/profile.d/conda.sh
@@ -195,9 +195,9 @@ else
 fi
 
 if curl -s --max-time 3 http://localhost:$EMB_PORT/v1/models >/dev/null 2>&1; then
-    echo "   Embedding ($EMB_MODEL):  http://localhost:$EMB_PORT ✅"
+    echo "   Dense Embedding ($EMB_MODEL):     http://localhost:$EMB_PORT ✅"
 else
-    echo "   Embedding ($EMB_MODEL):  http://localhost:$EMB_PORT ❌"
+    echo "   Dense Embedding ($EMB_MODEL):     http://localhost:$EMB_PORT ❌"
 fi
 
 if curl -s --max-time 3 http://localhost:$GEN_PORT/v1/models >/dev/null 2>&1; then

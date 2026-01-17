@@ -1,6 +1,9 @@
 data/
 docs/
 
+# External repositories (cloned for development)
+Qwen3-VL-Embedding/
+
 # Python
 **/__pycache__/
 *.py[cod]

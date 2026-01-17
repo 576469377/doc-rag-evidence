@@ -75,6 +75,18 @@ class AppConfig(BaseModel):
         "batch_size": 32
     })
 
+    # V0.2+: Dense-VL multimodal embedding retrieval
+    dense_vl: Dict[str, Any] = Field(default_factory=lambda: {
+        "enabled": False,
+        "embedder_type": "vllm",
+        "model": "Qwen/Qwen3-VL-Embedding-2B",
+        "model_path": "/workspace/cache/Qwen3-VL-Embedding-2B",
+        "endpoint": "http://localhost:8003",
+        "gpu": 1,
+        "index_type": "Flat",
+        "batch_size": 16
+    })
+
     # V0.1+: ColPali vision retrieval
     colpali: Dict[str, Any] = Field(default_factory=lambda: {
         "enabled": False,
@@ -169,7 +181,7 @@ class RetrieveHit(BaseModel):
     text: str
     score: float
     bbox: Optional[BBox] = None
-    source: Literal["bm25", "dense", "colpali", "hybrid", "rerank"] = "bm25"
+    source: Literal["bm25", "dense", "dense_vl", "colpali", "hybrid", "rerank"] = "bm25"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -189,7 +201,7 @@ class EvidenceItem(BaseModel):
     snippet: str
     bbox: Optional[BBox] = None
     score: float
-    source: Literal["bm25", "dense", "colpali", "hybrid", "rerank"] = "bm25"
+    source: Literal["bm25", "dense", "dense_vl", "colpali", "hybrid", "rerank"] = "bm25"
     rationale: Optional[str] = None  # optional explanation from selector
     metadata: Dict[str, Any] = Field(default_factory=dict)
 

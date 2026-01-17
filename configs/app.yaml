@@ -79,8 +79,26 @@ colpali:
   max_global_pool: 100              # Coarse stage top-N
   cache_dir: "data/cache/colpali"   # Embedding cache
 
+# ===== Dense-VL Multimodal Retrieval (V1.2+) =====
+dense_vl:
+  enabled: true                     # Enable multimodal dense retrieval
+  embedder_type: "vllm"             # vLLM embedding API
+  model: "Qwen/Qwen3-VL-Embedding-2B"  # Model name
+  model_path: "/workspace/cache/Qwen3-VL-Embedding-2B"  # Local model path
+  endpoint: "http://localhost:8003" # vllm server endpoint  
+  gpu: 2                            # GPU device ID (same as ColPali)
+  index_type: "Flat"                # Flat | IVF
+  nlist: 100                        # IVF clusters
+  nprobe: 10                        # IVF search clusters
+  batch_size: 8                    # Smaller batch for image processing
+  max_image_size: 1024              # Max image size (px) on longest side
+                                    # 1024=fast, 2048=quality, null=original
+  num_workers: 4                    # Parallel workers for indexing
+                                    # Each worker uses ~5GB GPU memory
+                                    # 4 workers for 24GB GPU, 2 for 12GB GPU
+
 # ===== Retrieval Mode (V0.1+) =====
-# retrieval_mode: bm25 | dense | colpali | hybrid
+# retrieval_mode: bm25 | dense | colpali | dense_vl | hybrid
 retrieval_mode: "bm25"              # Default to BM25 baseline
 
 # ===== Context & Safety =====
