@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/)
 [![Gradio](https://img.shields.io/badge/gradio-6.2.0-orange.svg)](https://gradio.app/)
 
-**当前版本**：V1.0 (2026-01) | [版本详情](VERSION.md)
+**当前版本**：V1.2 (2026-01) | [版本详情](VERSION.md)
 
 ---
 
@@ -17,10 +17,11 @@ Doc RAG Evidence 是一款基于检索增强生成（RAG）技术的企业级文
 ### ✨ 核心亮点
 
 - 🎨 **多模态理解**：同时处理文本和图像，理解图表、表格、公式
-- 🔍 **智能检索**：BM25 + 语义向量 + 视觉检索三合一
+- 🔍 **四种检索模式**：BM25 + Dense + Dense-VL + ColPali 多模态检索
 - 🔗 **精确引用**：每条答案自动标注证据来源 [1][2]...
 - 🎛️ **灵活配置**：Hybrid 融合检索，支持自定义权重
-- 📦 **批量处理**：支持多文档上传和批量评估
+- 📦 **批量处理**：支持 1000+ 文档批量上传，实时进度追踪
+- ⚡ **性能优化**：Flash Attention 2 + 图像压缩 + 并行索引 = 8-12x 加速
 - 🖥️ **Web 界面**：无代码操作，开箱即用
 
 ### 🎯 适用场景
@@ -44,12 +45,14 @@ graph TD
     C --> D[索引构建]
     D --> E1[BM25 索引]
     D --> E2[Dense 索引 FAISS]
-    D --> E3[ColPali 索引]
+    D --> E3[Dense-VL 索引 FAISS]
+    D --> E4[ColPali 索引]
     
     F[用户查询] --> G[混合检索]
     E1 --> G
     E2 --> G
     E3 --> G
+    E4 --> G
     G --> H[证据选择]
     H --> I[Qwen3-VL 生成]
     I --> J[答案 + 引用]
@@ -62,21 +65,21 @@ graph TD
 | **前端** | Web UI | Gradio 6.2.0 |
 | **检索** | 关键词 | BM25 (Rank-BM25) |
 | | 语义 | Qwen3-Embedding-0.6B + FAISS |
+| | 多模态 | Qwen3-VL-Embedding-2B + FAISS |
 | | 视觉 | ColPali (ColQwen3-Embed-4B) |
 | **生成** | MLLM | Qwen3-VL-4B-Instruct (vLLM) |
 | **OCR** | 识别 | HunyuanOCR (vLLM) |
 | **存储** | 文档 | Local FS (JSON) |
 | | 索引 | FAISS + BM25 Index |
+| **加速** | 推理 | Flash Attention 2 |
 
 ### GPU 资源分配
 
 ```
-
   GPU0: HunyuanOCR          (Port 8000) │  ← 文档 OCR 识别
   GPU1: Qwen3-Embedding     (Port 8001) │  ← 语义向量编码
-  GPU2: ColPali             (延迟加载)  │  ← 视觉检索
+  GPU2: ColPali / Dense-VL  (延迟加载)  │  ← 视觉/多模态检索（互斥）
   GPU3: Qwen3-VL-4B         (Port 8002) │  ← 答案生成
-
 ```
 
 ---
@@ -115,36 +118,59 @@ bash scripts/start_ui.sh
 #### 1️⃣ 上传文档
 
 ```
- "Document Management" 标签
+📤 "Document Management" 标签
  点击 "Upload PDF Files"（支持多选）
  勾选 "Use OCR"（扫描版必选）
  点击 "Ingest Documents"
+ 
+💡 大批量上传提示：
+ • 支持 1000+ 文件批量上传
+ • 自动分批处理（50个/批）避免内存溢出
+ • 实时进度追踪，每10个文件显示ETA
+ • 失败文件不影响其他文件处理
 ```
 
 #### 2️⃣ 构建索引
 
 ```
- "Build Indices" 区域
- 勾选索引类型：
-   ☑ BM25（推荐）
-   ☑ Dense（推荐）
-   ☐ ColPali（可选）
- 点击 "Build Selected Indices"
+🔨 "Build Indices" 区域
+ 选择索引类型（单选，避免GPU OOM）：
+   ○ bm25        - 关键词索引（快速，推荐）
+   ○ dense       - 语义向量索引（理解能力强）
+   ○ dense_vl    - 多模态索引（文本+图像理解）⭐ 新增
+   ○ colpali     - 视觉索引（图表理解）
+ 
+ 输入索引名称后缀（可选，默认 "default"）
+ 点击 "Build Index"
+ 
+⚡ Dense-VL 性能优化：
+ • Flash Attention 2：~2x 加速
+ • 图像压缩 (1024px)：~2x 加速
+ • 4 worker 并行：~4x 加速
+ • 总计：8-12x 实际加速
 ```
 
 #### 3️⃣ 开始提问
 
 ```
- "Query & Answer" 标签
+💬 "Query & Answer" 标签
  输入问题（如："碳酸氢钠的用途是什么？"）
  选择检索模式：
-   • BM25：关键词精确匹配
-   • Dense：语义理解
-   • ColPali：视觉理解
-   • Hybrid：混合检索（推荐）
+   • bm25      - 关键词精确匹配
+   • dense     - 语义理解（同义词）
+   • dense_vl  - 多模态理解（文本+图像）⭐ 新增
+   • colpali   - 视觉理解（图表、表格）
+   • hybrid    - 混合检索（推荐）
+ 
  选择证据格式：
-   • text：文本片段（精确引用）
-   • image：页面图片（适合图表）
+   • text  - 文本片段（精确引用）
+   • image - 页面图片（适合图表）
+ 
+ Hybrid 模式配置：
+   • 选择2个检索器（如 dense_vl + bm25）
+   • 调节权重（如 0.6 : 0.4）
+   • 选择融合方法（RRF 推荐）
+ 
  点击 "Ask Question"
 ```
 
@@ -158,7 +184,35 @@ bash scripts/start_ui.sh
 
 ## 💡 核心功能
 
-### 1. 多模态生成
+### 1. 多模态检索（V1.2 新增）
+
+**Dense-VL (Qwen3-VL-Embedding-2B)**：
+- **能力**：同时理解文本和图像内容
+- **优势**：对图表、表格、公式有更好的理解
+- **性能**：页面级索引，4096维向量
+- **架构**：离线索引 + 懒加载（类似ColPali）
+
+**性能优化三板斧**：
+
+| 优化项 | 技术 | 加速比 | 说明 |
+|-------|------|--------|------|
+| **Flash Attention 2** | 优化注意力计算 | ~2x | 自动检测，无则降级 |
+| **图像压缩** | 长边压缩至1024px | ~2x | 可配置 1024/2048/原图 |
+| **并行索引** | 多worker GPU共享 | ~4x | 默认4 worker (24GB GPU) |
+| **总计** | - | **8-12x** | 实测56页：140s → 15s |
+
+**配置示例** (configs/app.yaml):
+```yaml
+dense_vl:
+  enabled: true
+  model_path: "/workspace/cache/Qwen3-VL-Embedding-2B"
+  gpu: 2                    # 与ColPali共享GPU2（互斥）
+  max_image_size: 1024      # 图像压缩大小
+  num_workers: 4            # 并行worker数量
+  batch_size: 8             # 每批处理数量
+```
+
+### 2. 多模态生成
 
 | 模式 | 输入 | 优势 | 适用场景 |
 |-----|------|------|---------|
@@ -170,11 +224,12 @@ bash scripts/start_ui.sh
 - 能力：多模态理解、引用控制、幻觉抑制
 - 部署：vLLM 高性能推理
 
-### 2. 混合检索（Hybrid Retrieval）
+### 3. 混合检索（Hybrid Retrieval）
 
-**可选组合**：
+**可选组合（新增 Dense-VL）**：
 - `BM25 + Dense`：关键词 + 语义（通用推荐）
-- `BM25 + ColPali`：关键词 + 视觉（图表文档）
+- `BM25 + Dense-VL`：关键词 + 多模态（图表文档推荐）⭐
+- `Dense-VL + ColPali`：多模态双塔（深度理解）⭐
 - `Dense + ColPali`：语义 + 视觉（探索性查询）
 
 **融合策略**：
@@ -191,7 +246,7 @@ bash scripts/start_ui.sh
    ```
    - k=60（常数，来自RRF论文）
    - w1, w2 为权重（和为 1.0）
-   - 适合：跨模态融合（如 BM25 + ColPali）
+   - 适合：跨模态融合（如 BM25 + Dense-VL）
    - 优势：对分数尺度不敏感，基于排名而非原始分数
 
 **权重调节**：
@@ -200,12 +255,29 @@ bash scripts/start_ui.sh
 - 支持快速 A/B 测试
 - **注意**：两种融合策略都支持权重调节
 
-### 3. 批量处理
+### 4. 批量处理优化（V1.2）
 
-**多文档上传**：
-- Gradio 多选文件上传
-- 队列式串行处理
-- 实时进度反馈
+**智能分批上传**：
+- 自动检测大批量（>100 文件）
+- 分批处理：50 文件/批
+- 批次间垃圾回收，避免内存溢出
+- 实时进度：每10个文件更新一次
+
+**进度追踪**：
+```
+[450/1416] Processing: document_450.pdf
+  ✅ Success: doc_450 (12 pages)
+
+📊 Progress: 450/1416 (31%)
+   Elapsed: 3600s | ETA: 7740s
+
+[Batch 9/29] Files 401-450 of 1416
+```
+
+**容错机制**：
+- 单文件失败不影响其他文件
+- 详细错误日志
+- 最终汇总报告：成功数/失败数/总数
 
 **增量索引**：
 - 新文档自动加入已有索引
@@ -216,8 +288,9 @@ bash scripts/start_ui.sh
 - 支持 CSV/JSON 数据集
 - 自动运行问答
 - 导出评估报告（predictions + metrics）
+- 支持所有检索模式（含 Dense-VL）
 
-### 4. 文档处理
+### 5. 文档处理
 
 **高精度 OCR**：
 - 引擎：HunyuanOCR（腾讯混元）
@@ -244,6 +317,7 @@ doc-rag-evidence/
    ├── ingest_pdf_v1.py    # PDF 摄取 + OCR
    ├── index_bm25.py       # BM25 索引器
    ├── index_dense.py      # Dense 索引器（FAISS）
+   ├── index_dense_vl.py   # Dense-VL 多模态索引器 ⭐
    ├── index_colpali.py    # ColPali 索引器
    ├── retriever_hybrid.py # 混合检索器
    ├── generator_qwen_vl.py # 多模态生成器
@@ -255,6 +329,7 @@ doc-rag-evidence/
  scripts/                # 运维脚本
    ├── start_services.sh   # 一键启动
    ├── start_ui.sh         # 启动 UI
+   ├── build_dense_vl_index.py # Dense-VL 离线索引构建 ⭐
    └── stop_all_vllm.sh    # 停止服务
  configs/
    └── app.yaml            # 配置文件
@@ -295,9 +370,10 @@ llm:
 | 服务 | 端口 | GPU | 用途 |
 |-----|------|-----|------|
 | OCR | 8000 | 0 | 文档识别 |
-| Embedding | 8001 | 1 | 向量编码 |
+| Embedding | 8001 | 1 | 向量编码 (Dense) |
 | Generation | 8002 | 3 | 答案生成 |
-| ColPali | - | 2 | 视觉检索（延迟加载）|
+| Dense-VL | - | 2 | 多模态检索（延迟加载）⭐ |
+| ColPali | - | 2 | 视觉检索（延迟加载，与Dense-VL互斥）|
 | UI | 7860 | - | Web 界面 |
 
 ---
@@ -308,22 +384,24 @@ llm:
 
 | 功能 | 状态 | 说明 |
 |-----|:----:|------|
-| PDF 文档摄取 | ✅ | 批量上传 + OCR 识别 |
-| 索引构建 | ✅ | BM25/Dense/ColPali 增量更新 |
-| 单一检索 | ✅ | 三种模式独立运行 |
-| 混合检索 | ✅ | 任意组合 + 权重调节 |
+| PDF 文档摄取 | ✅ | 批量上传 + OCR 识别 + 智能分批 |
+| 索引构建 | ✅ | BM25/Dense/Dense-VL/ColPali 增量更新 |
+| Dense-VL 多模态检索 | ✅ | Qwen3-VL-Embedding-2B + 性能优化 |
+| 单一检索 | ✅ | 四种模式独立运行 |
+| 混合检索 | ✅ | 任意组合 + 权重调节 + Dense-VL 支持 |
 | 文本生成 | ✅ | 基于 OCR 文本片段 |
 | 图像生成 | ✅ | 基于页面图片（多模态）|
-| Web UI | ✅ | 4 大功能模块 |
-| 批量评估 | ✅ | CSV/JSON 数据集 |
+| Web UI | ✅ | 流式进度反馈 + 大批量优化 |
+| 批量评估 | ✅ | CSV/JSON 数据集 + 全模式支持 |
+| Flash Attention 2 | ✅ | ColPali + Dense-VL 自动加速 |
 
-### 🔄 待改进（V1.1）
+### 🔄 进行中（V1.3）
 
-| 问题 | 影响 | 优先级 |
+| 任务 | 进展 | 优先级 |
 |-----|------|:------:|
-| ColPali 证据无文本 | 图像模式体验 | 🔴 P0 |
-| 检索返回不统一 | 代码复杂度 | 🟡 P1 |
-| 评估指标单一 | 效果评估 | 🟡 P1 |
+| Dense-VL API 模式 | 🟡 规划中 | P1 |
+| 多轮对话支持 | 🟡 设计中 | P1 |
+| Reranker 集成 | 🟢 待开发 | P2 |
 
 ---
 
@@ -335,19 +413,26 @@ llm:
 
 ## 🗺️ 路线图
 
-### V1.1 - 证据统一与优化（进行中）
+### V1.2 - Dense-VL 多模态检索（已完成 ✅）
 
-- [ ] **T1** - ColPali 证据落块（page → block expansion）
-- [ ] **T2** - 统一检索返回契约（normalize_hits）
-- [ ] **T3** - 优化 Qwen3-VL 生成质量（prompt 工程）
-- [ ] **T4** - 证据上下文装配与去重
-- [ ] **T5** - 多轮对话支持
+- [x] **Dense-VL 集成** - Qwen3-VL-Embedding-2B 多模态索引
+- [x] **性能优化** - Flash Attention 2 + 图像压缩 + 并行索引
+- [x] **UI 增强** - 流式进度 + 大批量上传优化
+- [x] **Hybrid 扩展** - 支持 Dense-VL 混合检索
+- [x] **Hit Normalization** - 页面→块级自动扩展
 
-### V1.2 - 评估与性能（规划中）
+### V1.3 - 体验优化（进行中）
 
-- [ ] **T6** - 三层评估指标（检索/证据/生成）
-- [ ] **T7** - Reranker 集成
-- [ ] **T8** - 性能优化（缓存、并发）
+- [ ] **Dense-VL API 模式** - vLLM/SGLang 在线服务
+- [ ] **多轮对话** - 上下文记忆与引用追踪
+- [ ] **Reranker** - 二阶段精排
+- [ ] **缓存优化** - 向量/结果缓存加速
+
+### V1.4 - 评估增强（规划中）
+
+- [ ] **三层评估** - 检索/证据/生成分层指标
+- [ ] **对比实验** - A/B 测试框架
+- [ ] **可视化分析** - 性能仪表盘
 
 ---
 
@@ -363,9 +448,9 @@ llm:
 
 <div align="center">
 
-**最后更新**：2026-01-14  
-**维护团队**：Doc RAG Evidence Team
+**最后更新**：2026-01-17  
+**当前版本**：V1.2 - Dense-VL 多模态检索
 
-[🏠 首页](README.md) • [� 版本说明](VERSION.md) • [🐛 报告问题](https://github.com/576469377/doc-rag-evidence/issues)
+[🏠 首页](README.md) • [📜 版本说明](VERSION.md) • [🐛 报告问题](https://github.com/your-org/doc-rag-evidence/issues)
 
 </div>
