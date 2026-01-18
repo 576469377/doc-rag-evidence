@@ -78,9 +78,14 @@ graph TD
 ```
   GPU0: HunyuanOCR          (Port 8000) │  ← 文档 OCR 识别
   GPU1: Qwen3-Embedding     (Port 8001) │  ← 语义向量编码
-  GPU2: ColPali / Dense-VL  (延迟加载)  │  ← 视觉/多模态检索（互斥）
+  GPU2: ColPali / Dense-VL  (延迟加载)  │  ← 视觉/多模态检索（可共享）
   GPU3: Qwen3-VL-4B         (Port 8002) │  ← 答案生成
 ```
+
+**GPU2 共享机制**：
+- ColPali 和 Dense-VL 都支持图像 resize (max_image_size: 1024)
+- 显存优化后可在同一张 GPU 上运行（互斥延迟加载）
+- 适合单 GPU 资源有限场景
 
 ---
 
@@ -203,14 +208,30 @@ bash scripts/start_ui.sh
 
 **配置示例** (configs/app.yaml):
 ```yaml
+# ColPali 配置（视觉检索）
+colpali:
+  enabled: true
+  model: "/workspace/cache/tomoro-colqwen3-embed-4b"
+  device: "cuda:2"
+  batch_size: 8
+  max_global_pool: 100
+  max_image_size: 1024      # 图像 resize，节省显存
+
+# Dense-VL 配置（多模态检索）
 dense_vl:
   enabled: true
   model_path: "/workspace/cache/Qwen3-VL-Embedding-2B"
-  gpu: 2                    # 与ColPali共享GPU2（互斥）
+  gpu: 2                    # 与 ColPali 共享 GPU2
   max_image_size: 1024      # 图像压缩大小
-  num_workers: 4            # 并行worker数量
+  num_workers: 4            # 并行 worker 数量
   batch_size: 8             # 每批处理数量
 ```
+
+**显存优化**：
+- `max_image_size: 1024` - 图像最长边压缩至 1024px
+- `max_image_size: 2048` - 高质量模式（需更多显存）
+- `max_image_size: null` - 使用原始大小（不推荐）
+- 优化后 ColPali + Dense-VL 可共享一张 24GB GPU
 
 ### 2. 多模态生成
 
@@ -373,7 +394,7 @@ llm:
 | Embedding | 8001 | 1 | 向量编码 (Dense) |
 | Generation | 8002 | 3 | 答案生成 |
 | Dense-VL | - | 2 | 多模态检索（延迟加载）⭐ |
-| ColPali | - | 2 | 视觉检索（延迟加载，与Dense-VL互斥）|
+| ColPali | - | 2 | 视觉检索（延迟加载，可与 Dense-VL 共享）|
 | UI | 7860 | - | Web 界面 |
 
 ---
@@ -394,6 +415,7 @@ llm:
 | Web UI | ✅ | 流式进度反馈 + 大批量优化 |
 | 批量评估 | ✅ | CSV/JSON 数据集 + 全模式支持 |
 | Flash Attention 2 | ✅ | ColPali + Dense-VL 自动加速 |
+| 图像 Resize | ✅ | ColPali + Dense-VL 显存优化 |
 
 ### 🔄 进行中（V1.3）
 
@@ -413,10 +435,11 @@ llm:
 
 ## 🗺️ 路线图
 
-### V1.2 - Dense-VL 多模态检索（已完成 ✅）
+### V1.2 - Dense-VL 多模态检索 + 显存优化（已完成 ✅）
 
 - [x] **Dense-VL 集成** - Qwen3-VL-Embedding-2B 多模态索引
 - [x] **性能优化** - Flash Attention 2 + 图像压缩 + 并行索引
+- [x] **显存优化** - ColPali + Dense-VL 图像 resize，支持 GPU 共享
 - [x] **UI 增强** - 流式进度 + 大批量上传优化
 - [x] **Hybrid 扩展** - 支持 Dense-VL 混合检索
 - [x] **Hit Normalization** - 页面→块级自动扩展
@@ -448,8 +471,8 @@ llm:
 
 <div align="center">
 
-**最后更新**：2026-01-17  
-**当前版本**：V1.2 - Dense-VL 多模态检索
+**最后更新**：2026-01-18  
+**当前版本**：V1.2 - Dense-VL 多模态检索 + 显存优化
 
 [🏠 首页](README.md) • [📜 版本说明](VERSION.md) • [🐛 报告问题](https://github.com/your-org/doc-rag-evidence/issues)
 

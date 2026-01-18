@@ -118,7 +118,8 @@ class PDFIngestorV1:
             source_path=str(pdf_path.absolute()),
             sha256=sha256,
             created_at=datetime.utcnow().isoformat() + "Z",
-            page_count=page_count
+            page_count=page_count,
+            use_ocr=self.use_ocr  # Record whether OCR was used
         )
         
         # Save document metadata
@@ -127,7 +128,6 @@ class PDFIngestorV1:
         # Build page artifacts
         artifacts = self.build_page_artifacts(meta, self.config)
         
-        print(f"Ingested {doc_id}: {page_count} pages, {sum(len(a.blocks) for a in artifacts)} blocks")
         return meta
     
     def build_page_artifacts(self, meta: DocumentMeta, config: AppConfig) -> List[PageArtifact]:
@@ -197,8 +197,12 @@ class PDFIngestorV1:
                 # 5. Save artifact
                 self.store.save_page_artifact(artifact)
                 artifacts.append(artifact)
+                print(f"  → Page {page_id}: {len(blocks)} blocks")
         
         pdf_doc.close()
+        
+        total_blocks = sum(len(a.blocks) for a in artifacts)
+        print(f"Ingested {doc_id}: {len(artifacts)} pages, {total_blocks} total blocks")
         return artifacts
     
     def _render_page_image(

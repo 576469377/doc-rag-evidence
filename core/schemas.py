@@ -108,6 +108,7 @@ class DocumentMeta(BaseModel):
     sha256: Optional[str] = None
     created_at: str  # ISO time string
     page_count: int = 0
+    use_ocr: bool = False  # Whether OCR was used for text extraction
     extra: Dict[str, Any] = Field(default_factory=dict)
 
 

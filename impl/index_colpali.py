@@ -51,7 +51,8 @@ class ColPaliRetriever:
         model_name: str = "vidore/colqwen2-v0.1",
         device: str = "cuda:0",
         max_global_pool_pages: int = 100,
-        cache_dir: Optional[Path] = None
+        cache_dir: Optional[Path] = None,
+        max_image_size: int = None
     ):
         """
         Initialize ColPali retriever.
@@ -61,6 +62,7 @@ class ColPaliRetriever:
             device: CUDA device (e.g., "cuda:0")
             max_global_pool_pages: Max pages to retrieve in coarse stage
             cache_dir: Optional cache directory for embeddings
+            max_image_size: Max image size (pixels) on longest side. If None, use original size.
         """
         if torch is None or AutoProcessor is None:
             raise ImportError("transformers and torch required. Install with: pip install transformers torch")
@@ -71,6 +73,7 @@ class ColPaliRetriever:
         self.device = device
         self.max_global_pool_pages = max_global_pool_pages
         self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.max_image_size = max_image_size
         
         # Load model and processor
         print(f"Loading ColPali model: {model_name} on {device}")
@@ -107,6 +110,32 @@ class ColPaliRetriever:
         # Vector store
         self.store: Optional[PageVectorStore] = None
         self.index: Optional[faiss.Index] = None
+    
+    def _resize_image_if_needed(self, image_path: str) -> str:
+        """Resize image if needed to reduce GPU memory usage. Returns path to (possibly resized) image."""
+        if not self.max_image_size:
+            return image_path
+        
+        try:
+            img = Image.open(image_path)
+            w, h = img.size
+            max_dim = max(w, h)
+            
+            if max_dim <= self.max_image_size:
+                return image_path
+            
+            scale = self.max_image_size / max_dim
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            
+            img_resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            temp_path = Path(image_path).parent / f"temp_colpali_resized_{self.max_image_size}.jpg"
+            img_resized.save(str(temp_path), quality=95)
+            
+            return str(temp_path)
+        except Exception as e:
+            print(f"Warning: Failed to resize {image_path}: {e}")
+            return image_path
     
     def _get_cache_path(self, doc_id: str, page_id: int) -> Optional[Path]:
         """Get cache path for page embeddings."""
@@ -156,8 +185,11 @@ class ColPaliRetriever:
             global_vec: Shape (embed_dim,) - pooled representation
             patch_vecs: Shape (num_patches, embed_dim) - patch-level embeddings
         """
+        # Resize if needed to save GPU memory
+        resized_path = self._resize_image_if_needed(image_path)
+        
         # Load image
-        image = Image.open(image_path).convert('RGB')
+        image = Image.open(resized_path).convert('RGB')
         
         # Process image using ColQwen3 API
         features = self.processor.process_images(images=[image])
@@ -215,8 +247,11 @@ class ColPaliRetriever:
         for i in range(0, len(image_paths), batch_size):
             batch_paths = image_paths[i:i+batch_size]
             
+            # Resize images if needed
+            resized_paths = [self._resize_image_if_needed(path) for path in batch_paths]
+            
             # Load images
-            images = [Image.open(path).convert('RGB') for path in batch_paths]
+            images = [Image.open(path).convert('RGB') for path in resized_paths]
             
             # Batch process
             features = self.processor.process_images(images=images)
@@ -506,7 +541,8 @@ class ColPaliRetriever:
         cls,
         index_dir: Path,
         model_name: str,
-        device: str = "cuda:0"
+        device: str = "cuda:0",
+        max_image_size: int = None
     ) -> 'ColPaliRetriever':
         """
         Load index from disk (class method for compatibility).
@@ -515,14 +551,15 @@ class ColPaliRetriever:
             index_dir: Directory containing the saved index
             model_name: ColPali model name/path
             device: Device to load model on
+            max_image_size: Max image size for resizing (None = no resize)
             
         Returns:
             ColPaliRetriever instance with loaded index
         """
         index_dir = Path(index_dir)
         
-        # Create retriever
-        retriever = cls(model_name=model_name, device=device)
+        # Create retriever with max_image_size
+        retriever = cls(model_name=model_name, device=device, max_image_size=max_image_size)
         
         # Load index using instance method
         retriever.load_instance(index_dir)

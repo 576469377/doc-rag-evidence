@@ -52,6 +52,10 @@ class DocRAGUIV1:
         self.store = DocumentStoreLocal(self.config)
         self.logger = RunLoggerLocal(self.config)
         
+        # Initialize task manager for background processing
+        from infra.task_manager import TaskManager
+        self.task_manager = TaskManager(tasks_dir="data/tasks")
+        
         # Initialize retrievers
         self.retrievers = {}
         self._init_retrievers()
@@ -109,11 +113,25 @@ class DocRAGUIV1:
         except Exception as e:
             print(f"❌ Failed to load BM25 index: {e}")
         
+        # OCR-BM25 (load if exists)
+        ocr_bm25_index_name = "bm25_ocr"
+        ocr_bm25_index_dir = indices_dir / ocr_bm25_index_name
+        if ocr_bm25_index_dir.exists():
+            try:
+                retriever = BM25IndexerRetriever(self.store)
+                retriever.load(self.config, index_name=ocr_bm25_index_name)
+                self.retrievers["ocr-bm25"] = retriever
+                print(f"✅ Loaded OCR-BM25 index: {len(retriever.units)} units")
+            except Exception as e:
+                print(f"❌ Failed to load OCR-BM25 index: {e}")
+        
         # Dense (vLLM embedding)
         if self.config.dense.get("enabled"):
             dense_index_name = "dense_default"
             dense_index_dir = indices_dir / dense_index_name
-            if dense_index_dir.exists():
+            dense_meta_path = dense_index_dir / "dense_meta.json"
+            # Check if both directory and meta file exist
+            if dense_index_dir.exists() and dense_meta_path.exists():
                 try:
                     embedder = VLLMEmbedder(
                         endpoint=self.config.dense["endpoint"],
@@ -129,6 +147,27 @@ class DocRAGUIV1:
                     traceback.print_exc()
             else:
                 print(f"⚠️  Dense index not found at {dense_index_dir}")
+            
+            # OCR-Dense (load if exists)
+            ocr_dense_index_name = "dense_ocr"
+            ocr_dense_index_dir = indices_dir / ocr_dense_index_name
+            ocr_dense_meta_path = ocr_dense_index_dir / "dense_meta.json"
+            if ocr_dense_index_dir.exists() and ocr_dense_meta_path.exists():
+                try:
+                    embedder = VLLMEmbedder(
+                        endpoint=self.config.dense["endpoint"],
+                        model=self.config.dense["model"],
+                        batch_size=self.config.dense.get("batch_size", 32)
+                    )
+                    retriever = DenseIndexerRetriever.load(ocr_dense_index_dir, embedder)
+                    self.retrievers["ocr-dense"] = retriever
+                    print(f"✅ Loaded OCR-Dense index: {len(retriever.units)} units (vLLM @ {self.config.dense['endpoint']})")
+                except Exception as e:
+                    print(f"❌ Failed to load OCR-Dense index: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"⚠️  OCR-Dense index not found at {ocr_dense_index_dir}")
         
         # ColPali (vision embedding on GPU 2) - 延迟加载，只记录配置
         if self.config.colpali.get("enabled"):
@@ -171,6 +210,13 @@ class DocRAGUIV1:
     def cleanup(self):
         """Clean up lazy-loaded models and release GPU memory."""
         print("\n🧹 Cleaning up resources...")
+        
+        # Shutdown task manager
+        try:
+            self.task_manager.shutdown()
+            print("  ✓ Task manager shutdown")
+        except Exception as e:
+            print(f"  ⚠️  Error shutting down task manager: {e}")
         
         # Clear ColPali model
         if self.retrievers.get("colpali") is not None:
@@ -272,27 +318,144 @@ class DocRAGUIV1:
         with gr.Row():
             with gr.Column():
                 gr.Markdown("### 📤 Upload PDF (Supports Multiple Files)")
-                pdf_files = gr.File(
-                    label="Upload PDF(s)", 
-                    file_types=[".pdf"],
-                    file_count="multiple",
-                    type="filepath"
-                )
-                use_ocr = gr.Checkbox(label="Use OCR (slower, better quality)", value=False)
-                upload_btn = gr.Button("📤 Ingest Document(s)", variant="primary")
-                upload_status = gr.Textbox(label="Ingestion Status", lines=10, interactive=False)
+                
+                with gr.Accordion("Select Files", open=True):
+                    pdf_files = gr.File(
+                        label="", 
+                        file_types=[".pdf"],
+                        file_count="multiple",
+                        type="filepath",
+                        show_label=False,
+                        height=300  # 增加到300px
+                    )
+                    # File info display
+                    file_info = gr.Dataframe(
+                        headers=["Filename", "Size (MB)", "Pages"],
+                        label="Uploaded Files Info",
+                        interactive=False,
+                        max_height=200
+                    )
+                
+                with gr.Row():
+                    upload_btn = gr.Button("📤 Upload Files", variant="primary", scale=2)
+                    preview_btn = gr.Button("👁️ Preview Selected", variant="secondary", scale=1)
+                
+                with gr.Accordion("PDF Preview", open=False) as preview_accordion:
+                    # File selector for preview (if multiple files)
+                    preview_file_selector = gr.Dropdown(
+                        label="Select file to preview",
+                        choices=[],
+                        interactive=True
+                    )
+                    
+                    # Page navigation controls
+                    with gr.Row():
+                        prev_page_btn = gr.Button("◀ Previous", size="sm", scale=1)
+                        page_info_display = gr.Markdown("Page 1 / 1")
+                        next_page_btn = gr.Button("Next ▶", size="sm", scale=1)
+                    
+                    preview_page_num = gr.Slider(
+                        minimum=1, 
+                        maximum=1, 
+                        value=1, 
+                        step=1, 
+                        label="Jump to page"
+                    )
+                    
+                    # Zoom control
+                    zoom_level = gr.Slider(
+                        minimum=1,
+                        maximum=4,
+                        value=2,
+                        step=0.5,
+                        label="Zoom level (higher = better quality, slower)"
+                    )
+                    
+                    preview_image = gr.Image(
+                        label="Preview (click to view full size)", 
+                        type="filepath",
+                        show_label=True,
+                        height=600,
+                        interactive=False
+                    )
+                
+                with gr.Accordion("Upload Status", open=True):
+                    upload_status = gr.Textbox(
+                        label="",
+                        lines=6,
+                        max_lines=6,
+                        interactive=False
+                    )
+                
+                with gr.Accordion("📋 Background Tasks", open=False):
+                    gr.Markdown("View running and completed tasks. Tasks persist across UI restarts.")
+                    with gr.Row():
+                        refresh_tasks_btn = gr.Button("🔄 Refresh Tasks", scale=1)
+                        clear_tasks_btn = gr.Button("🗑️ Clear Completed", scale=1)
+                    tasks_display = gr.Dataframe(
+                        headers=["Task ID", "Type", "Status", "Progress", "Current Step", "Created"],
+                        label="Task List",
+                        interactive=False,
+                        max_height=300
+                    )
 
             with gr.Column():
                 gr.Markdown("### 📚 Document List")
-                refresh_btn = gr.Button("🔄 Refresh Document List")
+                
+                # Statistics and pagination controls
+                with gr.Row():
+                    # Get initial stats
+                    initial_stats, initial_list, initial_page_info = self._get_doc_list_paginated(1, 20)
+                    doc_stats = gr.Markdown(initial_stats)
+                    refresh_btn = gr.Button("🔄 Refresh", size="sm")
+                
+                with gr.Row():
+                    page_number = gr.Number(label="Page", value=1, minimum=1, precision=0, scale=1)
+                    page_size = gr.Dropdown(
+                        choices=[10, 20, 50, 100],
+                        value=20,
+                        label="Items per page",
+                        scale=1
+                    )
+                
                 doc_list = gr.Dataframe(
-                    headers=["Doc ID", "Title", "Pages", "Created At"],
-                    label="Documents",
-                    interactive=False
+                    headers=["Filename", "Doc ID", "Ingested", "Pages", "OCR", "Index Status", "Uploaded At"],
+                    label="",
+                    interactive=False,
+                    wrap=True,
+                    value=initial_list
                 )
+                
+                page_info = gr.Markdown(initial_page_info)
+                
+                gr.Markdown("---")
+                gr.Markdown("### ⚙️ Process Documents")
+                
+                with gr.Row():
+                    ingest_all_btn = gr.Button("📥 Ingest All Unprocessed", variant="primary", scale=1)
+                    ingest_status = gr.Textbox(label="Ingest Status", lines=2, interactive=False, scale=2)
+                
                 delete_docid = gr.Textbox(label="Document ID to Delete", placeholder="Enter doc_id")
                 delete_btn = gr.Button("🗑️ Delete Document", variant="stop")
                 delete_status = gr.Textbox(label="Delete Status", lines=1, interactive=False)
+                
+                gr.Markdown("---")
+                
+                # OCR Processing section
+                gr.Markdown("### 🔍 OCR Processing")
+                gr.Markdown("Re-process documents with OCR (useful if you uploaded without OCR initially)")
+                
+                ocr_docid = gr.Textbox(
+                    label="Document IDs for OCR", 
+                    placeholder="doc1,doc2 (comma-separated) or leave empty",
+                    lines=1
+                )
+                
+                with gr.Row():
+                    ocr_selected_btn = gr.Button("🔍 OCR Selected Documents", scale=1)
+                    ocr_all_non_ocr_btn = gr.Button("🔍 OCR All Non-OCR Documents", scale=1, variant="primary")
+                
+                ocr_status = gr.Textbox(label="OCR Processing Status", lines=3, interactive=False)
 
         gr.Markdown("---")
         
@@ -306,12 +469,15 @@ class DocRAGUIV1:
                 index_type = gr.Radio(
                     choices=[
                         "bm25",
+                        "ocr-bm25",
                         "dense",
+                        "ocr-dense",
                         "dense_vl",
                         "colpali"
                     ],
                     value="bm25",
-                    label="Select Index Type"
+                    label="Select Index Type",
+                    info="OCR variants only index documents processed with OCR"
                 )
                 index_name_suffix = gr.Textbox(
                     label="Index Name Suffix (optional)",
@@ -323,29 +489,124 @@ class DocRAGUIV1:
             with gr.Column():
                 build_status = gr.Textbox(
                     label="Build Status",
-                    lines=10,
+                    lines=15,
+                    max_lines=15,
                     interactive=False,
                     placeholder="Status will appear here..."
                 )
 
         # Event handlers
+        # File selection handler - show file info and populate preview file selector
+        pdf_files.change(
+            fn=self._handle_file_selection,
+            inputs=[pdf_files],
+            outputs=[file_info, preview_file_selector]
+        )
+        
+        # Preview handler - open accordion and show preview
+        preview_btn.click(
+            fn=self._handle_preview_pdf,
+            inputs=[pdf_files, preview_file_selector, preview_page_num, zoom_level],
+            outputs=[preview_image, preview_page_num, page_info_display, preview_accordion]
+        )
+        
+        # Page navigation
+        prev_page_btn.click(
+            fn=self._handle_prev_page,
+            inputs=[pdf_files, preview_file_selector, preview_page_num, zoom_level],
+            outputs=[preview_image, preview_page_num, page_info_display]
+        )
+        
+        next_page_btn.click(
+            fn=self._handle_next_page,
+            inputs=[pdf_files, preview_file_selector, preview_page_num, zoom_level],
+            outputs=[preview_image, preview_page_num, page_info_display]
+        )
+        
+        # Page number or zoom change
+        preview_page_num.change(
+            fn=self._handle_preview_update,
+            inputs=[pdf_files, preview_file_selector, preview_page_num, zoom_level],
+            outputs=[preview_image, page_info_display]
+        )
+        
+        zoom_level.change(
+            fn=self._handle_preview_update,
+            inputs=[pdf_files, preview_file_selector, preview_page_num, zoom_level],
+            outputs=[preview_image, page_info_display]
+        )
+        
+        # File selector change
+        preview_file_selector.change(
+            fn=self._handle_file_selector_change,
+            inputs=[pdf_files, preview_file_selector, zoom_level],
+            outputs=[preview_image, preview_page_num, page_info_display]
+        )
+        
         upload_btn.click(
             fn=self._handle_batch_upload,
-            inputs=[pdf_files, use_ocr],
-            outputs=[upload_status, doc_list],
-            show_progress=True
+            inputs=[pdf_files],
+            outputs=[upload_status, doc_stats, doc_list, page_info]
+        )
+        
+        # Task management
+        refresh_tasks_btn.click(
+            fn=self._handle_refresh_tasks,
+            inputs=[],
+            outputs=[tasks_display]
+        )
+        
+        clear_tasks_btn.click(
+            fn=self._handle_clear_completed_tasks,
+            inputs=[],
+            outputs=[upload_status, tasks_display]
         )
 
+        # Pagination event handlers
         refresh_btn.click(
-            fn=self._handle_refresh_docs,
+            fn=self._handle_refresh_docs_paginated,
+            inputs=[page_number, page_size],
+            outputs=[doc_stats, doc_list, page_info]
+        )
+        
+        page_number.change(
+            fn=self._handle_refresh_docs_paginated,
+            inputs=[page_number, page_size],
+            outputs=[doc_stats, doc_list, page_info]
+        )
+        
+        page_size.change(
+            fn=self._handle_refresh_docs_paginated,
+            inputs=[page_number, page_size],
+            outputs=[doc_stats, doc_list, page_info]
+        )
+        
+        # Ingest all button
+        ingest_all_btn.click(
+            fn=self._handle_ingest_all,
             inputs=[],
-            outputs=[doc_list]
+            outputs=[ingest_status, doc_stats, doc_list, page_info]
         )
 
         delete_btn.click(
             fn=self._handle_delete_doc,
-            inputs=[delete_docid],
-            outputs=[delete_status, doc_list]
+            inputs=[delete_docid, page_number, page_size],
+            outputs=[delete_status, doc_stats, doc_list, page_info]
+        )
+        
+        # OCR processing event handlers
+        ocr_selected_btn.click(
+            fn=self._handle_ocr_selected,
+            inputs=[ocr_docid, page_number, page_size],
+            outputs=[ocr_status, doc_stats, doc_list, page_info],
+            show_progress=True
+        )
+        
+        ocr_all_non_ocr_btn.click(
+            fn=self._handle_ocr_all_non_ocr,
+            inputs=[page_number, page_size],
+            outputs=[ocr_status, doc_stats, doc_list, page_info],
+            show_progress=True
         )
         
         build_btn.click(
@@ -363,7 +624,7 @@ class DocRAGUIV1:
                 # Retrieval mode selector - simplified to basic modes + hybrid
                 # Include retrievers that exist (including None placeholders with configs)
                 available_modes = []
-                for mode in ["bm25", "dense", "colpali", "dense_vl"]:
+                for mode in ["bm25", "ocr-bm25", "dense", "ocr-dense", "colpali", "dense_vl"]:
                     if mode in self.retrievers:
                         # Include if retriever exists or if it's a lazy-load placeholder with config
                         if self.retrievers[mode] is not None:
@@ -380,7 +641,7 @@ class DocRAGUIV1:
                     choices=available_modes,
                     value=available_modes[0] if available_modes else "bm25",
                     label="Retrieval Mode",
-                    info="单一检索 or Hybrid（混合检索，可在下方配置）"
+                    info="单一检索 or Hybrid | OCR variants use only OCR-indexed documents"
                 )
                 
                 question = gr.Textbox(
@@ -439,14 +700,14 @@ class DocRAGUIV1:
                     gr.Markdown("#### 检索器与权重")
                     
                     retriever_1 = gr.Dropdown(
-                        choices=["bm25", "dense", "colpali", "dense_vl"],
+                        choices=["bm25", "ocr-bm25", "dense", "ocr-dense", "colpali", "dense_vl"],
                         value="bm25",
                         label="检索器 1",
                         info="第一个检索器"
                     )
                     
                     retriever_2 = gr.Dropdown(
-                        choices=["bm25", "dense", "colpali", "dense_vl"],
+                        choices=["bm25", "ocr-bm25", "dense", "ocr-dense", "colpali", "dense_vl"],
                         value="dense",
                         label="检索器 2",
                         info="第二个检索器（必须与检索器1不同）"
@@ -554,7 +815,7 @@ class DocRAGUIV1:
                 
                 # Retrieval mode for evaluation - include lazy-load modes
                 available_modes = []
-                for mode in ["bm25", "dense", "colpali", "dense_vl"]:
+                for mode in ["bm25", "ocr-bm25", "dense", "ocr-dense", "colpali", "dense_vl"]:
                     if mode in self.retrievers:
                         if self.retrievers[mode] is not None:
                             available_modes.append(mode)
@@ -570,7 +831,7 @@ class DocRAGUIV1:
                     choices=available_modes,
                     value=available_modes[0] if available_modes else "bm25",
                     label="Retrieval Mode for Evaluation",
-                    info="单一检索 or Hybrid（混合检索，可在下方配置）"
+                    info="单一检索 or Hybrid | OCR variants use only OCR-indexed documents"
                 )
                 
                 # Evidence format selector
@@ -603,13 +864,13 @@ class DocRAGUIV1:
                         
                         with gr.Column():
                             eval_retriever_1 = gr.Dropdown(
-                                choices=["bm25", "dense", "colpali", "dense_vl"],
+                                choices=["bm25", "ocr-bm25", "dense", "ocr-dense", "colpali", "dense_vl"],
                                 value="bm25",
                                 label="检索器 1"
                             )
                             
                             eval_retriever_2 = gr.Dropdown(
-                                choices=["bm25", "dense", "colpali", "dense_vl"],
+                                choices=["bm25", "ocr-bm25", "dense", "ocr-dense", "colpali", "dense_vl"],
                                 value="dense",
                                 label="检索器 2"
                             )
@@ -674,16 +935,61 @@ class DocRAGUIV1:
         )
 
     # ========== Event Handlers ==========
+    
+    # Background task functions
+    @staticmethod
+    def _background_ingest_task(task_id: str, task_manager, config, store, uploaded_files):
+        """Background task for document ingestion."""
+        from impl.ingest_pdf_v1 import PDFIngestorV1
+        
+        success_count = 0
+        failed_count = 0
+        
+        for idx, (filename, persistent_path, doc_id) in enumerate(uploaded_files, 1):
+            try:
+                # Update progress
+                task_manager.update_task_progress(
+                    task_id,
+                    processed_items=idx - 1,
+                    current_step=f"Processing {filename}..."
+                )
+                
+                # Ingest document
+                ingestor = PDFIngestorV1(
+                    config=config,
+                    store=store,
+                    use_ocr=False
+                )
+                
+                meta = ingestor.ingest(str(persistent_path))
+                success_count += 1
+                
+            except Exception as e:
+                failed_count += 1
+                print(f"❌ Failed to process {filename}: {e}")
+        
+        # Final update
+        task_manager.update_task_progress(
+            task_id,
+            processed_items=len(uploaded_files),
+            current_step="Completed"
+        )
+        
+        return {
+            "success": success_count,
+            "failed": failed_count,
+            "total": len(uploaded_files)
+        }
 
-    def _handle_batch_upload(self, pdf_files, use_ocr: bool) -> Generator[Tuple[str, List], None, None]:
-        """Handle batch PDF upload and ingestion with streaming progress."""
+    def _handle_batch_upload(self, pdf_files) -> Tuple[str, str, List, str]:
+        """Handle batch PDF upload - only copy files to uploads directory."""
         try:
             print(f"[DEBUG] _handle_batch_upload called with {len(pdf_files) if pdf_files else 0} files")
             
             if pdf_files is None or len(pdf_files) == 0:
                 print("[DEBUG] No files uploaded")
-                yield "❌ Error: No files uploaded", self._get_doc_list()
-                return
+                stats, doc_list, page_info = self._get_doc_list_paginated(1, 20)
+                return "❌ Error: No files uploaded", stats, doc_list, page_info
             
             # Handle single file or multiple files
             if not isinstance(pdf_files, list):
@@ -691,105 +997,152 @@ class DocRAGUIV1:
             
             total_files = len(pdf_files)
             
-            # Warning for large batches
-            if total_files > 100:
-                status = f"⚠️ Large batch detected: {total_files} files\n"
-                status += "📊 Processing in batches to avoid memory issues...\n"
-                status += "=" * 50 + "\n\n"
-                yield status, self._get_doc_list()
-            else:
-                status = f"📦 Batch Upload: {total_files} file(s)\n"
-                status += "=" * 50 + "\n"
-                if use_ocr:
-                    status += "⚙️ OCR enabled - processing may take time...\n"
-                status += "\n"
-                yield status, self._get_doc_list()
+            import shutil
             
-            # Process in batches to avoid memory issues
-            BATCH_SIZE = 50  # Process 50 files at a time
-            success_count = 0
-            failed_count = 0
-            ingested_docs = []
+            # Create uploads directory for persistent storage
+            uploads_dir = Path("data/uploads")
+            uploads_dir.mkdir(parents=True, exist_ok=True)
             
-            import time
-            start_time = time.time()
+            # Upload files to backend
+            uploaded_count = 0
+            skipped_count = 0
+            failed_files = []
             
-            for batch_idx in range(0, total_files, BATCH_SIZE):
-                batch_end = min(batch_idx + BATCH_SIZE, total_files)
-                batch_files = pdf_files[batch_idx:batch_end]
-                
-                if total_files > BATCH_SIZE:
-                    status += f"\n🔄 Processing batch {batch_idx//BATCH_SIZE + 1}/{(total_files + BATCH_SIZE - 1)//BATCH_SIZE}\n"
-                    status += f"   Files {batch_idx + 1}-{batch_end} of {total_files}\n\n"
-                    yield status, self._get_doc_list()
-                
-                # Process each file in the batch
-                for idx, pdf_file in enumerate(batch_files, batch_idx + 1):
-                    try:
-                        filename = Path(pdf_file.name).name
-                        status += f"[{idx}/{total_files}] Processing: {filename}\n"
-                        yield status, self._get_doc_list()
-                        
-                        # Ingest with V1 ingestor
-                        ingestor = PDFIngestorV1(
-                            config=self.config,
-                            store=self.store,
-                            use_ocr=use_ocr
-                        )
-                        
-                        meta = ingestor.ingest(pdf_file.name)
-                        
-                        status += f"  ✅ Success: {meta.doc_id} ({meta.page_count} pages)\n"
-                        ingested_docs.append(meta.doc_id)
-                        success_count += 1
-                        
-                        # Show progress every 10 files
-                        if idx % 10 == 0:
-                            elapsed = time.time() - start_time
-                            avg_time = elapsed / idx
-                            remaining = (total_files - idx) * avg_time
-                            status += f"\n📊 Progress: {idx}/{total_files} ({idx*100//total_files}%)"
-                            status += f" | Elapsed: {elapsed:.0f}s | ETA: {remaining:.0f}s\n\n"
-                        
-                        yield status, self._get_doc_list()
-                        
-                    except Exception as e:
-                        status += f"  ❌ Failed: {str(e)}\n"
-                        failed_count += 1
-                        yield status, self._get_doc_list()
+            for pdf_file in pdf_files:
+                try:
+                    filename = Path(pdf_file.name).name
+                    persistent_path = uploads_dir / filename
                     
-                    status += "\n"
-                
-                # Clean up batch resources
-                import gc
-                gc.collect()
+                    # Check if file already exists in uploads
+                    if persistent_path.exists():
+                        skipped_count += 1
+                        continue
+                    
+                    # Copy file to persistent storage
+                    shutil.copy2(pdf_file.name, persistent_path)
+                    uploaded_count += 1
+                    
+                except Exception as e:
+                    print(f"Failed to upload {pdf_file.name}: {e}")
+                    failed_files.append((Path(pdf_file.name).name, str(e)))
             
-            # Final summary
-            elapsed_total = time.time() - start_time
+            stats, doc_list, page_info = self._get_doc_list_paginated(1, 20)
+            
+            status = f"✅ Upload Complete!\n"
             status += "=" * 50 + "\n"
-            status += f"📊 Final Summary:\n"
-            status += f"  ✅ Success: {success_count}/{total_files}\n"
-            status += f"  ❌ Failed: {failed_count}/{total_files}\n"
-            status += f"  ⏱️ Total time: {elapsed_total:.0f}s ({elapsed_total/total_files:.1f}s per file)\n"
+            status += f"📤 Total files: {total_files}\n"
+            status += f"✅ Uploaded: {uploaded_count}\n"
+            status += f"⏭️ Skipped (already exists): {skipped_count}\n"
             
-            if success_count > 0:
-                status += f"\n  First 10 IDs: {', '.join(ingested_docs[:10])}"
-                if len(ingested_docs) > 10:
-                    status += f" ... and {len(ingested_docs) - 10} more"
-                status += "\n\n⚠️ Next Step: Build indices below to enable retrieval"
+            if failed_files:
+                status += f"❌ Failed: {len(failed_files)}\n"
+                for fname, err in failed_files[:3]:
+                    status += f"  - {fname}: {err[:50]}\n"
             
-            yield status, self._get_doc_list()
+            status += "\n💡 Files saved to data/uploads/\n"
+            status += "⚠️  Click 'Ingest All Unprocessed' to process documents"
+            
+            return status, stats, doc_list, page_info
             
         except Exception as e:
             import traceback
-            error_msg = f"❌ Batch Upload Error: {str(e)}\n\nDetails:\n{traceback.format_exc()}"
-            yield error_msg, self._get_doc_list()
+            error_msg = f"❌ Upload Error: {str(e)}\n\nDetails:\n{traceback.format_exc()}"
+            stats, doc_list, page_info = self._get_doc_list_paginated(1, 20)
+            return error_msg, stats, doc_list, page_info
     
-    def _handle_upload(self, pdf_file, use_ocr: bool) -> Generator[Tuple[str, List], None, None]:
+    def _handle_upload(self, pdf_file) -> Tuple[str, str, List, str]:
         """Handle single PDF upload (legacy, kept for compatibility)."""
         # Redirect to batch handler
-        for result in self._handle_batch_upload([pdf_file] if pdf_file else None, use_ocr):
-            yield result
+        return self._handle_batch_upload([pdf_file] if pdf_file else None)
+    
+    def _handle_ingest_all(self) -> Tuple[str, str, List, str]:
+        """Ingest all unprocessed files in uploads directory."""
+        try:
+            from datetime import datetime
+            
+            # Get all PDF files from uploads directory
+            uploads_dir = Path("data/uploads")
+            pdf_files = list(uploads_dir.glob("*.pdf")) + list(uploads_dir.glob("*.PDF"))
+            
+            if not pdf_files:
+                stats, doc_list, page_info = self._get_doc_list_paginated(1, 20)
+                return "⚠️ No files found in uploads directory", stats, doc_list, page_info
+            
+            # Get ingested documents
+            ingested_docs = {doc.doc_id: doc for doc in self.store.list_documents()}
+            
+            # Find unprocessed files
+            unprocessed_files = []
+            for pdf_file in pdf_files:
+                doc_id = pdf_file.stem.replace(" ", "_").lower()
+                if doc_id not in ingested_docs:
+                    unprocessed_files.append((pdf_file.name, pdf_file, doc_id))
+            
+            if not unprocessed_files:
+                stats, doc_list, page_info = self._get_doc_list_paginated(1, 20)
+                status = f"✅ All files already ingested!\n"
+                status += f"Total files: {len(pdf_files)}\n"
+                status += f"Already ingested: {len(ingested_docs)}"
+                return status, stats, doc_list, page_info
+            
+            # Submit background task for ingestion
+            task_id = f"ingest_all_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            self.task_manager.submit_task(
+                task_id=task_id,
+                task_type="ingest",
+                func=self._background_ingest_task,
+                args=(self.config, self.store, unprocessed_files),
+                total_items=len(unprocessed_files),
+                description=f"Ingesting {len(unprocessed_files)} documents..."
+            )
+            
+            stats, doc_list, page_info = self._get_doc_list_paginated(1, 20)
+            
+            status = f"✅ Ingest task submitted!\n"
+            status += "=" * 50 + "\n"
+            status += f"📋 Task ID: {task_id}\n"
+            status += f"📁 Total files in uploads: {len(pdf_files)}\n"
+            status += f"✅ Already ingested: {len(ingested_docs)}\n"
+            status += f"⚙️ Queued for processing: {len(unprocessed_files)}\n\n"
+            status += "💡 Processing in background. Click 'Refresh Tasks' to see progress.\n"
+            status += "⚠️ You can close the UI - processing will continue."
+            
+            return status, stats, doc_list, page_info
+            
+        except Exception as e:
+            import traceback
+            error_msg = f"❌ Error: {str(e)}\n\n{traceback.format_exc()}"
+            stats, doc_list, page_info = self._get_doc_list_paginated(1, 20)
+            return error_msg, stats, doc_list, page_info
+    
+    def _handle_refresh_tasks(self) -> List:
+        """Refresh and display task list."""
+        tasks = self.task_manager.list_tasks(limit=20)
+        
+        rows = []
+        for task in tasks:
+            task_id_short = task.task_id[:20] + "..." if len(task.task_id) > 20 else task.task_id
+            progress_pct = f"{task.progress * 100:.1f}%"
+            created_time = task.created_at[:19].replace('T', ' ')  # Truncate to minutes
+            
+            rows.append([
+                task_id_short,
+                task.task_type,
+                task.status.value,
+                progress_pct,
+                task.current_step[:40],  # Truncate long steps
+                created_time
+            ])
+        
+        return rows
+    
+    def _handle_clear_completed_tasks(self) -> Tuple[str, List]:
+        """Clear completed tasks."""
+        removed = self.task_manager.clear_completed_tasks(keep_recent=5)
+        tasks_rows = self._handle_refresh_tasks()
+        
+        message = f"✅ Cleared {removed} old tasks (kept 5 most recent)"
+        return message, tasks_rows
 
     def _handle_build_indices(
         self,
@@ -807,7 +1160,16 @@ class DocRAGUIV1:
                 yield "❌ Error: No documents found. Please ingest documents first."
                 return
             
-            status += f"📚 Found {len(docs)} document(s)\n"
+            # Filter documents for OCR variants
+            if index_type in ["ocr-bm25", "ocr-dense"]:
+                ocr_docs = [doc for doc in docs if getattr(doc, 'use_ocr', False)]
+                status += f"📚 Found {len(docs)} document(s), {len(ocr_docs)} with OCR\n"
+                if len(ocr_docs) == 0:
+                    yield status + "\n❌ Error: No OCR documents found. Use non-OCR index or ingest documents with OCR enabled."
+                    return
+            else:
+                status += f"📚 Found {len(docs)} document(s)\n"
+            
             yield status
             
             # Initialize incremental index manager
@@ -816,7 +1178,7 @@ class DocRAGUIV1:
             # Build the selected index type
             if index_type == "bm25":
                 status += "\n" + "─" * 50 + "\n"
-                status += "⏳ BM25 Index Update\n"
+                status += "⏳ BM25 Index Update (All Documents)\n"
                 status += "─" * 50 + "\n"
                 try:
                     result = index_manager.update_bm25_index(
@@ -844,10 +1206,42 @@ class DocRAGUIV1:
                     status += f"{traceback.format_exc()}\n"
                 yield status
             
+            # OCR-BM25 variant
+            elif index_type == "ocr-bm25":
+                status += "\n" + "─" * 50 + "\n"
+                status += "⏳ BM25 Index Update (OCR Documents Only)\n"
+                status += "─" * 50 + "\n"
+                try:
+                    result = index_manager.update_bm25_index(
+                        index_name="bm25_ocr",
+                        filter_ocr=True
+                    )
+                    
+                    if result["status"] == "success":
+                        # Reload retriever
+                        retriever = BM25IndexerRetriever(self.store)
+                        retriever.load(self.config, index_name="bm25_ocr")
+                        self.retrievers["ocr-bm25"] = retriever
+                        
+                        status += f"✅ Success!\n"
+                        status += f"   New documents: {result['new_docs']}\n"
+                        status += f"   New units: {result['new_units']}\n"
+                        status += f"   Total: {result['total_units']} units from {result['total_docs']} documents\n"
+                    elif result["status"] == "no_update":
+                        status += f"ℹ️  {result['message']}\n"
+                        status += f"   All OCR documents already indexed\n"
+                    else:
+                        status += f"❌ {result['message']}\n"
+                except Exception as e:
+                    import traceback
+                    status += f"❌ Error: {str(e)}\n"
+                    status += f"{traceback.format_exc()}\n"
+                yield status
+            
             # Dense incremental build/update
             elif index_type == "dense":
                 status += "\n" + "─" * 50 + "\n"
-                status += "⏳ Dense Index Update\n"
+                status += "⏳ Dense Index Update (All Documents)\n"
                 status += "─" * 50 + "\n"
                 try:
                     result = index_manager.update_dense_index(
@@ -873,6 +1267,44 @@ class DocRAGUIV1:
                     elif result["status"] == "no_update":
                         status += f"ℹ️  {result['message']}\n"
                         status += f"   All documents already indexed\n"
+                    else:
+                        status += f"❌ {result['message']}\n"
+                except Exception as e:
+                    import traceback
+                    status += f"❌ Error: {str(e)}\n"
+                    status += f"{traceback.format_exc()}\n"
+                yield status
+            
+            # OCR-Dense variant
+            elif index_type == "ocr-dense":
+                status += "\n" + "─" * 50 + "\n"
+                status += "⏳ Dense Index Update (OCR Documents Only)\n"
+                status += "─" * 50 + "\n"
+                try:
+                    result = index_manager.update_dense_index(
+                        index_name="dense_ocr",
+                        filter_ocr=True
+                    )
+                    
+                    if result["status"] == "success":
+                        # Reload retriever with updated index
+                        embedder = VLLMEmbedder(
+                            endpoint=self.config.dense["endpoint"],
+                            model=self.config.dense["model"],
+                            batch_size=self.config.dense.get("batch_size", 32)
+                        )
+                        index_dir = Path(self.config.indices_dir) / "dense_ocr"
+                        retriever = DenseIndexerRetriever.load(index_dir, embedder)
+                        self.retrievers["ocr-dense"] = retriever
+                        
+                        status += f"✅ Success!\n"
+                        status += f"   New documents: {result['new_docs']}\n"
+                        status += f"   New units: {result['new_units']}\n"
+                        status += f"   Total: {result['total_units']} units\n"
+                        status += f"   vLLM endpoint: {self.config.dense['endpoint']}\n"
+                    elif result["status"] == "no_update":
+                        status += f"ℹ️  {result['message']}\n"
+                        status += f"   All OCR documents already indexed\n"
                     else:
                         status += f"❌ {result['message']}\n"
                 except Exception as e:
@@ -1023,7 +1455,8 @@ class DocRAGUIV1:
                         retriever = ColPaliRetriever(
                             model_name=self.config.colpali["model"],
                             device=device,
-                            max_global_pool_pages=self.config.colpali.get("max_global_pool", 100)
+                            max_global_pool_pages=self.config.colpali.get("max_global_pool", 100),
+                            max_image_size=self.config.colpali.get("max_image_size", 1024)
                         )
                         index_dir = Path(self.config.indices_dir) / f"colpali_{suffix}"
                         retriever.load_instance(index_dir)
@@ -1112,7 +1545,8 @@ class DocRAGUIV1:
                                 colpali_retriever = ColPaliRetriever.load(
                                     self._colpali_config["index_dir"],
                                     model_name=self._colpali_config["model_name"],
-                                    device=self._colpali_config["device"]
+                                    device=self._colpali_config["device"],
+                                    max_image_size=self._colpali_config.get("max_image_size", 1024)
                                 )
                                 self.retrievers["colpali"] = colpali_retriever
                                 print(f"✅ ColPali 模型加载完成")
@@ -1172,7 +1606,8 @@ class DocRAGUIV1:
                             retriever = ColPaliRetriever.load(
                                 self._colpali_config["index_dir"],
                                 model_name=self._colpali_config["model_name"],
-                                device=self._colpali_config["device"]
+                                device=self._colpali_config["device"],
+                                max_image_size=self._colpali_config.get("max_image_size", 1024)
                             )
                             self.retrievers["colpali"] = retriever
                             print(f"✅ ColPali 模型加载完成")
@@ -1339,7 +1774,8 @@ class DocRAGUIV1:
                                 colpali_retriever = ColPaliRetriever.load(
                                     self._colpali_config["index_dir"],
                                     model_name=self._colpali_config["model_name"],
-                                    device=self._colpali_config["device"]
+                                    device=self._colpali_config["device"],
+                                    max_image_size=self._colpali_config.get("max_image_size", 1024)
                                 )
                                 self.retrievers["colpali"] = colpali_retriever
                                 print(f"✅ ColPali loaded")
@@ -1399,7 +1835,8 @@ class DocRAGUIV1:
                             retriever = ColPaliRetriever.load(
                                 self._colpali_config["index_dir"],
                                 model_name=self._colpali_config["model_name"],
-                                device=self._colpali_config["device"]
+                                device=self._colpali_config["device"],
+                                max_image_size=self._colpali_config.get("max_image_size", 1024)
                             )
                             self.retrievers["colpali"] = retriever
                             print(f"✅ ColPali 模型加载完成")
@@ -1514,21 +1951,507 @@ class DocRAGUIV1:
             return False
 
     def _get_doc_list(self) -> List:
-        """Get list of documents."""
+        """Get list of documents (legacy, for compatibility)."""
         try:
             docs = self.store.list_documents()
+            
+            # Determine available index types (include ocr variants)
+            available_indices = []
+            if "bm25" in self.retrievers:
+                available_indices.append("bm25")
+            if "ocr-bm25" in self.retrievers:
+                available_indices.append("ocr-bm25")
+            if "dense" in self.retrievers or self.config.dense.get("enabled"):
+                available_indices.append("dense")
+            if "ocr-dense" in self.retrievers or self.config.dense.get("enabled"):
+                available_indices.append("ocr-dense")
+            if "colpali" in self.retrievers or hasattr(self, "_colpali_config"):
+                available_indices.append("colpali")
+            if "dense_vl" in self.retrievers or self._dense_vl_config:
+                available_indices.append("dense_vl")
+            
             rows = []
             for meta in docs:
+                # OCR status
+                ocr_status = "✓" if getattr(meta, 'use_ocr', False) else "✗"
+                
+                # Check index status
+                index_status = []
+                for idx_type in available_indices:
+                    status = self._check_index_completeness(meta.doc_id, meta.page_count, idx_type)
+                    index_status.append(f"{idx_type.upper()}:{status}")
+                
+                status_str = " | ".join(index_status) if index_status else "No indices"
+                
                 rows.append([
                     meta.doc_id,
                     meta.title,
                     meta.page_count,
+                    ocr_status,
+                    status_str,
                     meta.created_at
                 ])
             return rows
         except Exception as e:
             print(f"Error listing documents: {e}")
             return []
+    
+    def _check_index_completeness(self, doc_id: str, page_count: int, index_type: str) -> str:
+        """
+        Check if a document's index is complete.
+        
+        Args:
+            doc_id: Document ID
+            page_count: Total pages in document
+            index_type: Type of index (bm25, ocr-bm25, dense, ocr-dense, colpali, dense_vl)
+            
+        Returns:
+            Status string: "✓" (complete), "✗" (missing), "⚠" (incomplete)
+        """
+        try:
+            # Determine index directory based on type
+            if index_type == "bm25":
+                index_dir = Path(self.config.indices_dir) / "bm25_default"
+            elif index_type == "ocr-bm25":
+                index_dir = Path(self.config.indices_dir) / "bm25_ocr"
+            elif index_type == "dense":
+                index_dir = Path(self.config.indices_dir) / "dense_default"
+            elif index_type == "ocr-dense":
+                index_dir = Path(self.config.indices_dir) / "dense_ocr"
+            elif index_type == "colpali":
+                index_dir = Path(self.config.indices_dir) / "colpali_default"
+            elif index_type == "dense_vl":
+                index_dir = Path(self.config.indices_dir) / "dense_vl_default"
+            else:
+                return "✗"
+            
+            # Check if index exists
+            if not index_dir.exists():
+                return "✗"
+            
+            # Load tracker to check document status
+            from impl.index_tracker import IndexTracker
+            tracker = IndexTracker(index_dir)
+            
+            if doc_id not in tracker.indexed_docs:
+                return "✗"
+            
+            # Check if page count matches (all pages indexed)
+            indexed_info = tracker.indexed_docs[doc_id]
+            indexed_page_count = indexed_info.get("page_count", 0)
+            
+            if indexed_page_count == page_count:
+                return "✓"
+            else:
+                return "⚠"  # Incomplete - not all pages indexed
+                
+        except Exception as e:
+            return "✗"
+    
+    def _get_doc_list_paginated(self, page: int, page_size: int) -> Tuple[str, List, str]:
+        """Get paginated list of uploaded files with ingestion status."""
+        try:
+            from datetime import datetime
+            import os
+            
+            # Get all PDF files from uploads directory
+            uploads_dir = Path("data/uploads")
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            
+            pdf_files = list(uploads_dir.glob("*.pdf")) + list(uploads_dir.glob("*.PDF"))
+            pdf_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)  # Sort by upload time
+            
+            total = len(pdf_files)
+            
+            # Get ingested documents
+            ingested_docs = {doc.doc_id: doc for doc in self.store.list_documents()}
+            
+            # Calculate pagination
+            page = max(1, int(page))
+            page_size = int(page_size)
+            start_idx = (page - 1) * page_size
+            end_idx = min(start_idx + page_size, total)
+            
+            # Get page slice
+            page_files = pdf_files[start_idx:end_idx]
+            
+            # Determine available index types
+            available_indices = []
+            if "bm25" in self.retrievers:
+                available_indices.append("bm25")
+            if "ocr-bm25" in self.retrievers:
+                available_indices.append("ocr-bm25")
+            if "dense" in self.retrievers or self.config.dense.get("enabled"):
+                available_indices.append("dense")
+            if "ocr-dense" in self.retrievers or self.config.dense.get("enabled"):
+                available_indices.append("ocr-dense")
+            if "colpali" in self.retrievers or hasattr(self, "_colpali_config"):
+                available_indices.append("colpali")
+            if "dense_vl" in self.retrievers or self._dense_vl_config:
+                available_indices.append("dense_vl")
+            
+            # Build rows
+            rows = []
+            for pdf_file in page_files:
+                filename = pdf_file.name
+                doc_id = pdf_file.stem.replace(" ", "_").lower()
+                
+                # Check if ingested
+                if doc_id in ingested_docs:
+                    meta = ingested_docs[doc_id]
+                    ingested_status = "✓"
+                    pages = meta.page_count
+                    ocr_status = "✓" if getattr(meta, 'use_ocr', False) else "✗"
+                    
+                    # Check index status
+                    index_status = []
+                    for idx_type in available_indices:
+                        status = self._check_index_completeness(doc_id, pages, idx_type)
+                        index_status.append(f"{idx_type.upper()}:{status}")
+                    status_str = " | ".join(index_status) if index_status else "-"
+                else:
+                    ingested_status = "✗"
+                    pages = "-"
+                    ocr_status = "-"
+                    status_str = "Not ingested"
+                
+                # Get upload time
+                upload_time = datetime.fromtimestamp(pdf_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                
+                rows.append([
+                    filename,
+                    doc_id,
+                    ingested_status,
+                    pages,
+                    ocr_status,
+                    status_str,
+                    upload_time
+                ])
+            
+            # Statistics
+            ingested_count = len(ingested_docs)
+            not_ingested = total - ingested_count
+            stats = f"**Total Files**: {total} | **Ingested**: {ingested_count} | **Not Ingested**: {not_ingested}"
+            
+            # Page info
+            if total == 0:
+                page_info = "No files in uploads folder"
+            else:
+                page_info = f"Showing {start_idx + 1}-{end_idx} of {total} (Page {page})"
+            
+            return stats, rows, page_info
+            
+        except Exception as e:
+            print(f"Error listing files: {e}")
+            import traceback
+            traceback.print_exc()
+            return "**Total Files**: 0", [], "Error loading files"
+    
+    def _handle_file_selection(self, files):
+        """Handle file selection and display file info with page counts."""
+        if not files:
+            return [], gr.update(choices=[], value=None)
+        
+        if not isinstance(files, list):
+            files = [files]
+        
+        rows = []
+        filenames = []
+        for f in files:
+            try:
+                import pdfplumber
+                filename = Path(f.name).name
+                filenames.append(filename)
+                size_mb = Path(f.name).stat().st_size / (1024 * 1024)
+                
+                # Get page count
+                with pdfplumber.open(f.name) as pdf:
+                    page_count = len(pdf.pages)
+                
+                rows.append([filename, f"{size_mb:.2f}", page_count])
+            except Exception as e:
+                filename = Path(f.name).name
+                filenames.append(filename)
+                rows.append([filename, "N/A", "Error"])
+        
+        # Update file selector dropdown
+        return rows, gr.update(choices=filenames, value=filenames[0] if filenames else None)
+    
+    def _handle_preview_pdf(self, files, selected_file, page_num: int, zoom: float):
+        """Preview a page from selected PDF and open accordion."""
+        if not files:
+            return None, gr.update(), "No file", gr.update(open=False)
+        
+        if not isinstance(files, list):
+            files = [files]
+        
+        if len(files) == 0:
+            return None, gr.update(), "No file", gr.update(open=False)
+        
+        try:
+            import fitz  # PyMuPDF
+            from PIL import Image
+            
+            # Find the selected file
+            pdf_path = None
+            if selected_file:
+                for f in files:
+                    if Path(f.name).name == selected_file:
+                        pdf_path = f.name
+                        break
+            
+            if not pdf_path:
+                pdf_path = files[0].name
+            
+            doc = fitz.open(pdf_path)
+            max_pages = len(doc)
+            
+            # Clamp page number
+            page_num = max(1, min(int(page_num), max_pages))
+            
+            # Render page with zoom (maintain aspect ratio)
+            page = doc[page_num - 1]
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+            
+            # Convert to PIL Image to ensure proper aspect ratio handling
+            img_data = pix.tobytes("png")
+            import io
+            img = Image.open(io.BytesIO(img_data))
+            
+            # Save to temp file
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                img.save(tmp.name, format="PNG")
+                preview_path = tmp.name
+            
+            doc.close()
+            
+            page_info = f"**Page {page_num} / {max_pages}**"
+            
+            # Update slider and open accordion
+            return preview_path, gr.update(maximum=max_pages, value=page_num), page_info, gr.update(open=True)
+            
+        except Exception as e:
+            print(f"Preview error: {e}")
+            return None, gr.update(), "Error loading preview", gr.update(open=False)
+    
+    def _handle_preview_update(self, files, selected_file, page_num: int, zoom: float):
+        """Update preview when page or zoom changes."""
+        if not files:
+            return None, "No file"
+        
+        try:
+            import fitz
+            from PIL import Image
+            
+            if not isinstance(files, list):
+                files = [files]
+            
+            # Find the selected file
+            pdf_path = None
+            if selected_file:
+                for f in files:
+                    if Path(f.name).name == selected_file:
+                        pdf_path = f.name
+                        break
+            
+            if not pdf_path:
+                pdf_path = files[0].name
+            
+            doc = fitz.open(pdf_path)
+            max_pages = len(doc)
+            page_num = max(1, min(int(page_num), max_pages))
+            
+            page = doc[page_num - 1]
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+            
+            # Convert to PIL Image to maintain aspect ratio
+            img_data = pix.tobytes("png")
+            import io
+            img = Image.open(io.BytesIO(img_data))
+            
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                img.save(tmp.name, format="PNG")
+                preview_path = tmp.name
+            
+            doc.close()
+            
+            page_info = f"**Page {page_num} / {max_pages}**"
+            return preview_path, page_info
+            
+        except Exception as e:
+            print(f"Preview update error: {e}")
+            return None, "Error"
+    
+    def _handle_prev_page(self, files, selected_file, page_num: int, zoom: float):
+        """Go to previous page."""
+        new_page = max(1, int(page_num) - 1)
+        img, page_info = self._handle_preview_update(files, selected_file, new_page, zoom)
+        return img, gr.update(value=new_page), page_info
+    
+    def _handle_next_page(self, files, selected_file, page_num: int, zoom: float):
+        """Go to next page."""
+        new_page = int(page_num) + 1
+        img, page_info = self._handle_preview_update(files, selected_file, new_page, zoom)
+        return img, gr.update(value=new_page), page_info
+    
+    def _handle_file_selector_change(self, files, selected_file, zoom: float):
+        """Handle file selector change - reset to page 1."""
+        preview_path, page_info = self._handle_preview_update(files, selected_file, 1, zoom)
+        
+        # Get max pages for the new file
+        if files and selected_file:
+            try:
+                import fitz
+                if not isinstance(files, list):
+                    files = [files]
+                
+                for f in files:
+                    if Path(f.name).name == selected_file:
+                        doc = fitz.open(f.name)
+                        max_pages = len(doc)
+                        doc.close()
+                        return preview_path, gr.update(maximum=max_pages, value=1), page_info
+            except:
+                pass
+        
+        return preview_path, gr.update(value=1), page_info
+    
+    def _handle_refresh_docs_paginated(self, page: int, page_size: int) -> Tuple[str, List, str]:
+        """Refresh document list with pagination."""
+        return self._get_doc_list_paginated(page, page_size)
+
+    def _handle_delete_doc(self, doc_id: str, page: int = 1, page_size: int = 20) -> Tuple[str, str, List, str]:
+        """Delete a document and return updated paginated list."""
+        try:
+            if not doc_id:
+                stats, rows, page_info = self._get_doc_list_paginated(page, page_size)
+                return "Error: No doc_id provided", stats, rows, page_info
+            
+            self.store.delete_document(doc_id)
+            stats, rows, page_info = self._get_doc_list_paginated(page, page_size)
+            return f"✅ Deleted: {doc_id}", stats, rows, page_info
+            
+        except Exception as e:
+            stats, rows, page_info = self._get_doc_list_paginated(page, page_size)
+            return f"Error: {str(e)}", stats, rows, page_info
+    
+    def _handle_ocr_selected(self, doc_ids_str: str, page: int = 1, page_size: int = 20) -> Tuple[str, str, List, str]:
+        """Re-process selected documents with OCR."""
+        try:
+            if not doc_ids_str or not doc_ids_str.strip():
+                stats, rows, page_info = self._get_doc_list_paginated(page, page_size)
+                return "❌ Error: No document IDs provided", stats, rows, page_info
+            
+            # Parse doc IDs
+            doc_ids = [d.strip() for d in doc_ids_str.split(",") if d.strip()]
+            
+            if not doc_ids:
+                stats, rows, page_info = self._get_doc_list_paginated(page, page_size)
+                return "❌ Error: No valid document IDs", stats, rows, page_info
+            
+            status = f"🔍 OCR Processing {len(doc_ids)} document(s)...\n"
+            status += "=" * 50 + "\n\n"
+            
+            success_count = 0
+            failed_count = 0
+            skipped_count = 0
+            
+            for doc_id in doc_ids:
+                try:
+                    # Get existing document metadata
+                    existing_meta = self.store.get_document(doc_id)
+                    if not existing_meta:
+                        status += f"❌ {doc_id}: Not found\n"
+                        failed_count += 1
+                        continue
+                    
+                    # Check if already OCR processed
+                    if getattr(existing_meta, 'use_ocr', False):
+                        status += f"⏭️  {doc_id}: Already OCR processed, skipping\n"
+                        skipped_count += 1
+                        continue
+                    
+                    # Re-ingest with OCR
+                    from impl.ingest_pdf_v1 import PDFIngestorV1
+                    ingestor = PDFIngestorV1(
+                        config=self.config,
+                        store=self.store,
+                        use_ocr=True
+                    )
+                    
+                    status += f"⏳ Processing {doc_id}...\n"
+                    meta = ingestor.ingest(existing_meta.source_path, doc_id=doc_id)
+                    status += f"✅ {doc_id}: OCR completed ({meta.page_count} pages)\n"
+                    success_count += 1
+                    
+                except Exception as e:
+                    status += f"❌ {doc_id}: {str(e)}\n"
+                    failed_count += 1
+            
+            status += "\n" + "=" * 50 + "\n"
+            status += f"📊 Summary: ✅ {success_count} succeeded | ⏭️ {skipped_count} skipped | ❌ {failed_count} failed\n"
+            if success_count > 0:
+                status += "💡 Next: Rebuild indices to use OCR text"
+            
+            stats, rows, page_info = self._get_doc_list_paginated(page, page_size)
+            return status, stats, rows, page_info
+            
+        except Exception as e:
+            import traceback
+            stats, rows, page_info = self._get_doc_list_paginated(page, page_size)
+            return f"❌ Error: {str(e)}\n{traceback.format_exc()}", stats, rows, page_info
+    
+    def _handle_ocr_all_non_ocr(self, page: int = 1, page_size: int = 20) -> Tuple[str, str, List, str]:
+        """Process all non-OCR documents with OCR."""
+        try:
+            # Find all documents without OCR
+            all_docs = self.store.list_documents()
+            non_ocr_docs = [doc for doc in all_docs if not getattr(doc, 'use_ocr', False)]
+            
+            if not non_ocr_docs:
+                stats, rows, page_info = self._get_doc_list_paginated(page, page_size)
+                return "ℹ️  No non-OCR documents found. All documents already processed with OCR.", stats, rows, page_info
+            
+            status = f"🔍 OCR Processing {len(non_ocr_docs)} non-OCR document(s)...\n"
+            status += "=" * 50 + "\n\n"
+            
+            success_count = 0
+            failed_count = 0
+            
+            from impl.ingest_pdf_v1 import PDFIngestorV1
+            
+            for doc in non_ocr_docs:
+                try:
+                    # Re-ingest with OCR
+                    ingestor = PDFIngestorV1(
+                        config=self.config,
+                        store=self.store,
+                        use_ocr=True
+                    )
+                    
+                    status += f"⏳ Processing {doc.doc_id}...\n"
+                    meta = ingestor.ingest(doc.source_path, doc_id=doc.doc_id)
+                    status += f"✅ {doc.doc_id}: OCR completed ({meta.page_count} pages)\n"
+                    success_count += 1
+                    
+                except Exception as e:
+                    status += f"❌ {doc.doc_id}: {str(e)}\n"
+                    failed_count += 1
+            
+            status += "\n" + "=" * 50 + "\n"
+            status += f"📊 Summary: ✅ {success_count} succeeded | ❌ {failed_count} failed\n"
+            status += f"💡 Total non-OCR documents: {len(non_ocr_docs)}\n"
+            status += "⚠️  Next Step: Rebuild indices to use OCR text"
+            
+            stats, rows, page_info = self._get_doc_list_paginated(page, page_size)
+            return status, stats, rows, page_info
+            
+        except Exception as e:
+            import traceback
+            stats, rows, page_info = self._get_doc_list_paginated(page, page_size)
+            return f"❌ Error: {str(e)}\n{traceback.format_exc()}", stats, rows, page_info
 
 
 def main():
