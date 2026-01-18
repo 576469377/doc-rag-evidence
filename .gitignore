@@ -33,4 +33,8 @@ README_OPTIMIZATION.md
 
 FINAL_UPDATE_SUMMARY.md
 
+# Debug and utility scripts
+debug_*.py
+count_py_lines.py
+
 test*.py
