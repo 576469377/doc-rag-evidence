@@ -1330,9 +1330,13 @@ class DocRAGUIV1:
                     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
                     status += f"📍 Using GPU: {gpu_id}\n"
                     
+                    # Build index name with suffix
+                    index_name = f"dense_vl_{suffix}"
+                    status += f"📝 Index name: {index_name}\n"
+                    
                     # Run offline build script with streaming output
                     process = subprocess.Popen(
-                        ["python", "-u", str(script_path)],  # -u for unbuffered output
+                        ["python", "-u", str(script_path), "--index-name", index_name],
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         text=True,
