@@ -100,8 +100,17 @@ class DocumentStoreLocal:
             if src_path != dest_path:
                 shutil.copy2(artifact.image_path, dest_image)
 
-    def load_page_artifact(self, doc_id: str, page_id: int) -> Optional[PageArtifact]:
-        """Load page artifact from disk."""
+    def load_page_artifact(self, doc_id: str, page_id: int, use_ocr_text: bool = False) -> Optional[PageArtifact]:
+        """Load page artifact from disk.
+        
+        Args:
+            doc_id: Document ID
+            page_id: Page ID
+            use_ocr_text: If True, load OCR text instead of PyMuPDF extracted text
+        
+        Returns:
+            PageArtifact or None if not found
+        """
         from core.schemas import PageText, Block
 
         page_dir = self._get_page_dir(doc_id, page_id)
@@ -110,12 +119,34 @@ class DocumentStoreLocal:
 
         artifact = PageArtifact(doc_id=doc_id, page_id=page_id)
 
-        # Load text
-        text_path = page_dir / "text.json"
-        if text_path.exists():
-            with open(text_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            artifact.text = PageText(**data)
+        # Load text - choose OCR or PyMuPDF extraction
+        if use_ocr_text:
+            # Try OCR text first
+            ocr_path = page_dir / "ocr.json"
+            if ocr_path.exists():
+                with open(ocr_path, "r", encoding="utf-8") as f:
+                    ocr_data = json.load(f)
+                # OCR json has different structure: {"text": ..., "blocks": ..., "metadata": ...}
+                artifact.text = PageText(
+                    doc_id=doc_id,
+                    page_id=page_id,
+                    text=ocr_data.get("text", ""),
+                    language=None
+                )
+            else:
+                # Fallback to PyMuPDF text if OCR not available
+                text_path = page_dir / "text.json"
+                if text_path.exists():
+                    with open(text_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    artifact.text = PageText(**data)
+        else:
+            # Load PyMuPDF extracted text
+            text_path = page_dir / "text.json"
+            if text_path.exists():
+                with open(text_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                artifact.text = PageText(**data)
 
         # Load blocks
         blocks_path = page_dir / "blocks.json"
@@ -171,8 +202,16 @@ class DocumentStoreLocal:
                 pages.append(page_meta)
         return pages
 
-    def get_all_pages(self, doc_id: str) -> List[PageArtifact]:
-        """Load all page artifacts for a document."""
+    def get_all_pages(self, doc_id: str, use_ocr_text: bool = False) -> List[PageArtifact]:
+        """Load all page artifacts for a document.
+        
+        Args:
+            doc_id: Document ID
+            use_ocr_text: If True, load OCR text instead of PyMuPDF extracted text
+        
+        Returns:
+            List of PageArtifact objects
+        """
         pages = []
         pages_base = self.docs_dir / doc_id / "pages"
         if not pages_base.exists():
@@ -181,7 +220,7 @@ class DocumentStoreLocal:
         for page_dir in sorted(pages_base.iterdir()):
             if page_dir.is_dir():
                 page_id = int(page_dir.name)
-                artifact = self.load_page_artifact(doc_id, page_id)
+                artifact = self.load_page_artifact(doc_id, page_id, use_ocr_text=use_ocr_text)
                 if artifact:
                     pages.append(artifact)
         return pages

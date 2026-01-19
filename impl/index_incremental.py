@@ -130,7 +130,9 @@ class IncrementalIndexManager:
         # Build units for new/incomplete documents
         new_units = []
         for doc_id in doc_ids:
-            units = retriever.build_units(doc_id, self.config)
+            # Use OCR text if this is an OCR index
+            use_ocr_text = filter_ocr
+            units = retriever.build_units(doc_id, self.config, use_ocr_text=use_ocr_text)
             new_units.extend(units)
             
             # Update tracker
@@ -240,7 +242,9 @@ class IncrementalIndexManager:
         bm25_retriever = BM25IndexerRetriever(self.store)
         new_units = []
         for doc_id in doc_ids:
-            units = bm25_retriever.build_units(doc_id, self.config)
+            # Use OCR text if this is an OCR index
+            use_ocr_text = filter_ocr
+            units = bm25_retriever.build_units(doc_id, self.config, use_ocr_text=use_ocr_text)
             new_units.extend(units)
             
             # Update tracker

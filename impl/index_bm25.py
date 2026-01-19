@@ -42,19 +42,20 @@ class BM25IndexerRetriever:
                 "rank-bm25 is required. Install with: pip install rank-bm25"
             )
 
-    def build_units(self, doc_id: str, config: AppConfig) -> List[IndexUnit]:
+    def build_units(self, doc_id: str, config: AppConfig, use_ocr_text: bool = False) -> List[IndexUnit]:
         """
         Build index units from a document's page artifacts.
         
         Args:
             doc_id: Document ID
             config: App configuration
+            use_ocr_text: If True, use OCR text instead of PyMuPDF extracted text
             
         Returns:
             List of IndexUnit objects
         """
         units = []
-        pages = self.store.get_all_pages(doc_id)
+        pages = self.store.get_all_pages(doc_id, use_ocr_text=use_ocr_text)
 
         for page in pages:
             if config.chunk_level == "page":
