@@ -1199,18 +1199,36 @@ class DocRAGUIV1:
             total_pages = None
             processed_pages = 0
             
+            # Get task to access total_items if needed
+            task = task_manager.get_task(task_id)
+            if task and task.total_items > 0:
+                # Use total_items from task creation as fallback
+                total_pages = task.total_items
+            
             for line in process.stdout:
                 output_lines.append(line.rstrip())
                 clean_line = line.strip()
                 
-                # Extract total pages count
+                # Extract total pages count (multiple formats)
+                # Format 1: "Total pages to embed: N" (single batch mode)
+                # Format 2: "Total pages to embed: N new pages" (incremental mode)
                 if "Total pages to embed:" in clean_line:
                     match = re.search(r'Total pages to embed:\s*(\d+)', clean_line)
                     if match:
-                        total_pages = int(match.group(1))
+                        pages_in_msg = int(match.group(1))
+                        # In incremental mode, this is new pages count
+                        # Use it if we don't have total_pages yet, or update it
+                        if "new pages" in clean_line:
+                            # Incremental mode: this is new pages, not total
+                            # Keep using task.total_items as total
+                            pass
+                        else:
+                            # Single batch mode: this is total
+                            total_pages = pages_in_msg
+                        
                         task_manager.update_task_progress(
                             task_id,
-                            current_step=f"Total pages: {total_pages}",
+                            current_step=f"Total pages: {total_pages or pages_in_msg}",
                             progress=0.01
                         )
                 
@@ -1233,12 +1251,20 @@ class DocRAGUIV1:
                     match = re.search(r'(\d+)\s+total pages indexed', clean_line)
                     if match:
                         processed_pages = int(match.group(1))
+                        # Calculate progress based on processed vs total
                         if total_pages and total_pages > 0:
                             progress = min(0.95, processed_pages / total_pages)
                             task_manager.update_task_progress(
                                 task_id,
                                 current_step=f"Saved: {processed_pages}/{total_pages} pages",
                                 progress=progress
+                            )
+                        else:
+                            # No total_pages available, just show count
+                            task_manager.update_task_progress(
+                                task_id,
+                                current_step=f"Saved: {processed_pages} pages",
+                                progress=0.5  # Default to 50% if we can't calculate
                             )
                 
                 # Extract embeddings shape (indicates encoding done)
@@ -1535,20 +1561,49 @@ class DocRAGUIV1:
                 status += "─" * 50 + "\n"
                 try:
                     import uuid
+                    from impl.index_tracker import IndexTracker
                     
                     # Build index name with suffix
                     index_name = f"dense_vl_{suffix}"
                     gpu_id = self.config.dense_vl.get("gpu", 1)
                     
                     status += f"📝 Index name: {index_name}\n"
-                    status += f"📍 Using GPU: {gpu_id}\n"
+                    status += f"📍 Using GPU: {gpu_id}\n\n"
+                    
+                    # Check current index status
+                    index_dir = Path(self.config.indices_dir) / index_name
+                    tracker = IndexTracker(index_dir)
+                    indexed_docs = tracker.get_indexed_docs()
+                    
+                    # Get all documents and calculate what needs processing
+                    docs = self.store.list_documents()
+                    total_docs = len(docs)
+                    total_pages = sum(doc.page_count for doc in docs)
+                    
+                    already_indexed_count = len(indexed_docs)
+                    to_index_count = total_docs - already_indexed_count
+                    
+                    # Calculate pages
+                    indexed_pages = sum(
+                        tracker.indexed_docs[doc.doc_id].get('page_count', 0)
+                        for doc in docs if doc.doc_id in indexed_docs
+                    )
+                    pages_to_process = total_pages - indexed_pages
+                    
+                    # Display statistics
+                    status += f"📊 Current Status:\n"
+                    status += f"   Total documents: {total_docs} ({total_pages:,} pages)\n"
+                    status += f"   Already indexed: {already_indexed_count} docs ({indexed_pages:,} pages) ✓\n"
+                    status += f"   To be processed: {to_index_count} docs ({pages_to_process:,} pages)\n\n"
+                    
+                    if to_index_count == 0:
+                        status += "✅ All documents already indexed!\n"
+                        status += "   No new documents to process.\n"
+                        yield status
+                        return
                     
                     # Submit as background task
                     task_id = f"index_dense_vl_{uuid.uuid4().hex[:8]}"
-                    
-                    # Get document count for progress tracking
-                    docs = self.store.list_documents()
-                    total_pages = sum(doc.page_count for doc in docs)
                     
                     task = self.task_manager.submit_task(
                         task_id=task_id,
@@ -1556,17 +1611,26 @@ class DocRAGUIV1:
                         func=self._run_dense_vl_indexing,
                         args=(index_name, gpu_id),
                         kwargs={},
-                        total_items=total_pages,
+                        total_items=total_pages,  # Use total for progress calculation
                         description=f"Building Dense-VL index: {index_name}"
                     )
                     
                     status += f"✅ Task submitted: {task_id}\n"
-                    status += f"   Total pages to process: {total_pages}\n"
-                    status += f"   Check 'Background Tasks' tab for progress\n"
-                    # Estimate time: ~0.05-0.13 sec/page for Dense-VL
-                    est_min = int(total_pages * 0.05 / 60)
-                    est_max = int(total_pages * 0.13 / 60)
-                    status += f"\n💡 This is a long-running task (~{est_min}-{est_max} minutes for {total_pages:,} pages)\n"
+                    status += f"   Check 'Background Tasks' tab for progress\n\n"
+                    
+                    # Estimate time based on pages to process (with 4 workers: ~0.38 sec/page)
+                    est_sec_per_page = 0.38
+                    est_minutes = int(pages_to_process * est_sec_per_page / 60)
+                    est_hours = est_minutes // 60
+                    est_min_remainder = est_minutes % 60
+                    
+                    if est_hours > 0:
+                        time_str = f"~{est_hours}h {est_min_remainder}min"
+                    else:
+                        time_str = f"~{est_minutes} minutes"
+                    
+                    status += f"💡 Estimated time: {time_str} for {pages_to_process:,} pages\n"
+                    status += f"   (4 workers, incremental saving every 50 docs)\n"
                     status += f"   You can close this window and check progress later\n"
                     
                 except Exception as e:
@@ -1582,20 +1646,49 @@ class DocRAGUIV1:
                 status += "─" * 50 + "\n"
                 try:
                     import uuid
+                    from impl.index_tracker import IndexTracker
                     
                     # Build index name with suffix
                     index_name = f"colpali_{suffix}"
                     device = self.config.colpali.get("device", "cuda:2")
                     
                     status += f"📝 Index name: {index_name}\n"
-                    status += f"📍 Using Device: {device}\n"
+                    status += f"📍 Using Device: {device}\n\n"
+                    
+                    # Check current index status
+                    index_dir = Path(self.config.indices_dir) / index_name
+                    tracker = IndexTracker(index_dir)
+                    indexed_docs = tracker.get_indexed_docs()
+                    
+                    # Get all documents and calculate what needs processing
+                    docs = self.store.list_documents()
+                    total_docs = len(docs)
+                    total_pages = sum(doc.page_count for doc in docs)
+                    
+                    already_indexed_count = len(indexed_docs)
+                    to_index_count = total_docs - already_indexed_count
+                    
+                    # Calculate pages
+                    indexed_pages = sum(
+                        tracker.indexed_docs[doc.doc_id].get('page_count', 0)
+                        for doc in docs if doc.doc_id in indexed_docs
+                    )
+                    pages_to_process = total_pages - indexed_pages
+                    
+                    # Display statistics
+                    status += f"📊 Current Status:\n"
+                    status += f"   Total documents: {total_docs} ({total_pages:,} pages)\n"
+                    status += f"   Already indexed: {already_indexed_count} docs ({indexed_pages:,} pages) ✓\n"
+                    status += f"   To be processed: {to_index_count} docs ({pages_to_process:,} pages)\n\n"
+                    
+                    if to_index_count == 0:
+                        status += "✅ All documents already indexed!\n"
+                        status += "   No new documents to process.\n"
+                        yield status
+                        return
                     
                     # Submit as background task
                     task_id = f"index_colpali_{uuid.uuid4().hex[:8]}"
-                    
-                    # Get document count for progress tracking
-                    docs = self.store.list_documents()
-                    total_pages = sum(doc.page_count for doc in docs)
                     
                     task = self.task_manager.submit_task(
                         task_id=task_id,
@@ -1603,17 +1696,26 @@ class DocRAGUIV1:
                         func=self._run_colpali_indexing,
                         args=(index_name, device, suffix),
                         kwargs={},
-                        total_items=total_pages,
+                        total_items=total_pages,  # Use total for progress calculation
                         description=f"Building ColPali index: {index_name}"
                     )
                     
                     status += f"✅ Task submitted: {task_id}\n"
-                    status += f"   Total pages to process: {total_pages}\n"
-                    status += f"   Check 'Background Tasks' tab for progress\n"
-                    # Estimate time: ~0.02-0.06 sec/page for ColPali
-                    est_min = int(total_pages * 0.02 / 60)
-                    est_max = int(total_pages * 0.06 / 60)
-                    status += f"\n💡 This is a long-running task (~{est_min}-{est_max} minutes for {total_pages:,} pages)\n"
+                    status += f"   Check 'Background Tasks' tab for progress\n\n"
+                    
+                    # Estimate time based on pages to process (~0.04 sec/page)
+                    est_sec_per_page = 0.04
+                    est_minutes = int(pages_to_process * est_sec_per_page / 60)
+                    est_hours = est_minutes // 60
+                    est_min_remainder = est_minutes % 60
+                    
+                    if est_hours > 0:
+                        time_str = f"~{est_hours}h {est_min_remainder}min"
+                    else:
+                        time_str = f"~{est_minutes} minutes"
+                    
+                    status += f"💡 Estimated time: {time_str} for {pages_to_process:,} pages\n"
+                    status += f"   You can close this window and check progress later\n"
                     status += f"   You can close this window and check progress later\n"
                     
                 except Exception as e:
@@ -2272,10 +2374,56 @@ class DocRAGUIV1:
                     upload_time
                 ])
             
-            # Statistics
+            # Statistics with index completion info for all index types
             ingested_count = len(ingested_docs)
             not_ingested = total - ingested_count
+            
+            # Count index completeness for all available index types
+            from impl.index_tracker import IndexTracker
+            index_stats = {}
+            
+            for idx_type in available_indices:
+                # Map index type to directory name
+                if idx_type == "bm25":
+                    index_dir = Path(self.config.indices_dir) / "bm25_default"
+                elif idx_type == "ocr-bm25":
+                    index_dir = Path(self.config.indices_dir) / "bm25_ocr"
+                elif idx_type == "dense":
+                    index_dir = Path(self.config.indices_dir) / "dense_default"
+                elif idx_type == "ocr-dense":
+                    index_dir = Path(self.config.indices_dir) / "dense_ocr"
+                elif idx_type == "colpali":
+                    index_dir = Path(self.config.indices_dir) / "colpali_default"
+                elif idx_type == "dense_vl":
+                    index_dir = Path(self.config.indices_dir) / "dense_vl_default"
+                else:
+                    continue
+                
+                if index_dir.exists():
+                    try:
+                        tracker = IndexTracker(index_dir)
+                        complete = 0
+                        for doc_id, doc in ingested_docs.items():
+                            if doc_id in tracker.indexed_docs:
+                                indexed_info = tracker.indexed_docs[doc_id]
+                                if indexed_info.get('page_count', 0) == doc.page_count:
+                                    complete += 1
+                        index_stats[idx_type] = (complete, ingested_count)
+                    except:
+                        pass
+            
             stats = f"**Total Files**: {total} | **Ingested**: {ingested_count} | **Not Ingested**: {not_ingested}"
+            
+            # Add index statistics
+            if index_stats:
+                stats += "\n\n**Index Completion**: "
+                index_parts = []
+                for idx_type in available_indices:
+                    if idx_type in index_stats:
+                        complete, total_docs = index_stats[idx_type]
+                        pct = (complete / total_docs * 100) if total_docs > 0 else 0
+                        index_parts.append(f"{idx_type.upper()}: {complete}/{total_docs} ({pct:.0f}%)")
+                stats += " | ".join(index_parts)
             
             # Page info
             if total == 0:

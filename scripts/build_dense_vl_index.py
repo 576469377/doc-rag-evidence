@@ -516,6 +516,12 @@ def build_dense_vl_index(
         if save_every_n_docs > 0 and len(doc_ids_to_index) > save_every_n_docs:
             print(f"📦 Incremental mode: saving every {save_every_n_docs} documents")
             
+            # Calculate total pages to process
+            total_new_pages = sum(store.get_document(doc_id).page_count for doc_id in doc_ids_to_index)
+            total_pages_to_process = len(existing_page_images) + total_new_pages
+            print(f"🔨 Total pages to embed: {total_new_pages} new pages")
+            print(f"📊 Total pages after completion: {total_pages_to_process} pages")
+            
             # Process in batches
             for batch_start in range(0, len(doc_ids_to_index), save_every_n_docs):
                 batch_end = min(batch_start + save_every_n_docs, len(doc_ids_to_index))
