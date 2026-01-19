@@ -38,29 +38,38 @@ from core.schemas import AppConfig
 from infra.store_local import DocumentStoreLocal
 from impl.index_tracker import IndexTracker
 
+# Global embedder for worker processes (initialized once per worker)
+_worker_embedder = None
 
-def process_batch_worker(batch_data, model_path, gpu, max_image_size, worker_id):
+def init_worker(model_path, gpu, max_image_size):
     """
-    Worker function to process a batch of pages.
-    Each worker loads its own model instance.
-    
-    Args:
-        batch_data: List of (doc_id, page_id, image_path, text) tuples
-        model_path: Path to model
-        gpu: GPU ID
-        max_image_size: Max image size
-        worker_id: Worker ID for tracking
-        
-    Returns:
-        np.ndarray: Embeddings for the batch
+    Initialize worker process with a persistent embedder instance.
+    This is called once per worker when the pool is created.
     """
-    # Each worker gets its own embedder instance
-    embedder = OfflineVLEmbedder(
+    global _worker_embedder
+    _worker_embedder = OfflineVLEmbedder(
         model_path=model_path,
         gpu=gpu,
         gpu_memory=0.45,
         max_image_size=max_image_size
     )
+    print(f"Worker {os.getpid()} initialized with model")
+
+
+def process_batch_worker(batch_data, worker_id):
+    """
+    Worker function to process a batch of pages.
+    Uses the pre-loaded embedder instance from worker initialization.
+    
+    Args:
+        batch_data: List of (doc_id, page_id, image_path, text) tuples
+        worker_id: Worker ID for tracking
+        
+    Returns:
+        np.ndarray: Embeddings for the batch
+    """
+    global _worker_embedder
+    embedder = _worker_embedder
     
     # Process pages one by one with progress bar for this worker
     all_embeddings = []
@@ -257,15 +266,158 @@ class OfflineVLEmbedder:
         return embeddings.astype(np.float32)
 
 
+def _collect_pages_for_docs(doc_ids, store, config):
+    """Collect page images and text for a list of documents."""
+    page_images = []
+    for doc_id in doc_ids:
+        doc = store.get_document(doc_id)
+        
+        for page_id in range(doc.page_count):
+            # Get page image
+            page_image_path = Path(config.docs_dir) / doc_id / "pages" / f"{page_id:04d}" / "page.png"
+            if not page_image_path.exists():
+                print(f"  ⚠️  Missing image: {doc_id} page {page_id}")
+                continue
+            
+            # Get page text
+            page_artifact = store.load_page_artifact(doc_id, page_id)
+            page_text = ""
+            if page_artifact and page_artifact.text:
+                page_text = page_artifact.text.text
+            
+            page_images.append((doc_id, page_id, str(page_image_path), page_text))
+        
+        print(f"  + {doc_id}: {doc.page_count} pages")
+    
+    return page_images
+
+
+def _embed_pages(page_images, model_path, gpu, max_image_size, num_workers, pool=None):
+    """Embed a list of page images using parallel workers.
+    
+    Args:
+        pool: Optional pre-created process pool. If provided, will be reused.
+              If None, a new pool will be created and cleaned up.
+    """
+    print(f"📄 Embedding {len(page_images)} pages...")
+    
+    if num_workers > 1:
+        # Split pages into chunks
+        chunk_size = max(1, len(page_images) // num_workers)
+        chunks = [page_images[i:i+chunk_size] 
+                 for i in range(0, len(page_images), chunk_size)]
+        
+        # Process in parallel
+        all_embeddings = []
+        created_pool = False
+        
+        try:
+            if pool is None:
+                # Create new pool (only if not provided)
+                from multiprocessing import Pool
+                print(f"⚡ Creating {num_workers} parallel workers")
+                pool = Pool(processes=num_workers, 
+                           initializer=init_worker,
+                           initargs=(model_path, gpu, max_image_size))
+                created_pool = True
+            
+            # Prepare arguments (no need to pass model params anymore)
+            worker_args = [(chunk, i) for i, chunk in enumerate(chunks)]
+            
+            for embeddings in pool.starmap(process_batch_worker, worker_args):
+                all_embeddings.append(embeddings)
+        finally:
+            # Only close if we created it
+            if created_pool and pool is not None:
+                pool.close()
+                pool.join()
+        
+        all_embeddings = np.vstack(all_embeddings)
+    else:
+        # Single worker
+        print("📄 Using single worker")
+        embedder = OfflineVLEmbedder(
+            model_path=model_path,
+            gpu=gpu,
+            gpu_memory=0.45,
+            max_image_size=max_image_size
+        )
+        
+        batch_size = 8
+        all_embeddings = []
+        
+        from tqdm import tqdm
+        with tqdm(total=len(page_images), desc="Processing", unit="page") as pbar:
+            for i in range(0, len(page_images), batch_size):
+                batch = page_images[i:i+batch_size]
+                inputs = [(text, image_path) for _, _, image_path, text in batch]
+                embeddings = embedder.embed_batch(inputs)
+                all_embeddings.append(embeddings)
+                pbar.update(len(batch))
+        
+        all_embeddings = np.vstack(all_embeddings)
+    
+    print(f"✅ Embeddings shape: {all_embeddings.shape}")
+    return all_embeddings
+
+
+def _save_index(index_dir, embeddings, page_images, tracker, batch_doc_ids, store):
+    """Save FAISS index and metadata."""
+    import faiss
+    
+    # Build index
+    embed_dim = embeddings.shape[1]
+    index = faiss.IndexFlatIP(embed_dim)
+    faiss.normalize_L2(embeddings)
+    index.add(embeddings)
+    
+    # Save index
+    index_dir.mkdir(parents=True, exist_ok=True)
+    faiss.write_index(index, str(index_dir / "dense_vl.index"))
+    
+    # Save metadata
+    page_ids = [(doc_id, page_id) for doc_id, page_id, _, _ in page_images]
+    page_metadata = {}
+    for doc_id, page_id, image_path, text in page_images:
+        page_key = f"{doc_id}__page{page_id:04d}"
+        page_metadata[page_key] = {
+            "doc_id": doc_id,
+            "page_id": page_id,
+            "image_path": image_path,
+            "text": text
+        }
+    
+    metadata = {
+        "index_type": "Flat",
+        "nlist": 100,
+        "nprobe": 10,
+        "embed_dim": embed_dim,
+        "num_pages": len(page_ids),
+        "page_ids": page_ids,
+        "page_metadata": page_metadata
+    }
+    
+    with open(index_dir / "metadata.json", 'w') as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    
+    # Mark documents as indexed AFTER successful save
+    for doc_id in batch_doc_ids:
+        doc = store.get_document(doc_id)
+        tracker.mark_indexed(doc_id, doc.page_count, doc.page_count)
+    
+    tracker.save()
+
+
 def build_dense_vl_index(
     config_path: str = "configs/app.yaml",
     index_name: str = "dense_vl_default",
     force_rebuild: bool = False,
     max_image_size: int = 1024,
-    num_workers: int = 1
+    num_workers: int = 1,
+    save_every_n_docs: int = 50
 ):
     """
-    Build Dense-VL index using offline embedding.
+    Build Dense-VL index using offline embedding with incremental saving.
     
     Args:
         config_path: Path to config file
@@ -278,6 +430,8 @@ def build_dense_vl_index(
         num_workers: Number of parallel workers (model instances).
                     Each worker uses ~5GB GPU memory.
                     Recommended: 4 for 24GB GPU, 2 for 12GB GPU.
+        save_every_n_docs: Save index after processing this many documents.
+                          Default: 50 docs. Set to 0 to disable incremental saving.
     """
     
     # Load config
@@ -337,166 +491,114 @@ def build_dense_vl_index(
                     ))
                 print(f"   Loaded {len(existing_page_images)} existing pages")
     
-    # Collect new page images
-    new_page_images = []
-    for doc_id in doc_ids_to_index:
-        doc = store.get_document(doc_id)
-        
-        for page_id in range(doc.page_count):
-            # Get page image
-            page_image_path = Path(config.docs_dir) / doc_id / "pages" / f"{page_id:04d}" / "page.png"
-            if not page_image_path.exists():
-                print(f"  ⚠️  Missing image: {doc_id} page {page_id}")
-                continue
-            
-            # Get page text
-            page_artifact = store.load_page_artifact(doc_id, page_id)
-            page_text = ""
-            if page_artifact and page_artifact.text:
-                page_text = page_artifact.text.text
-            
-            new_page_images.append((doc_id, page_id, str(page_image_path), page_text))
-        
-        # Update tracker
-        tracker.mark_indexed(doc_id, doc.page_count, doc.page_count)
-        print(f"  + {doc_id}: {doc.page_count} pages")
-    
-    if not new_page_images:
-        print("❌ No pages to index")
-        return
-    
-    # Combine old and new
-    all_page_images = existing_page_images + new_page_images
-    print(f"🔨 Total pages to embed: {len(all_page_images)}")
-    
     # Get config
     model_path = config.dense_vl["model_path"]
     gpu = config.dense_vl.get("gpu", 1)
     
-    # Set CUDA_VISIBLE_DEVICES for multiprocessing (must be set before spawning workers)
+    # Set CUDA_VISIBLE_DEVICES for multiprocessing
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
-    print(f"🎯 Set CUDA_VISIBLE_DEVICES={gpu} (all workers will use GPU {gpu})")
+    print(f"🎯 Set CUDA_VISIBLE_DEVICES={gpu}")
     
-    # Parallel processing
-    if num_workers > 1:
-        print(f"⚡ Using {num_workers} parallel workers")
-        print(f"   Each worker loads one model instance (~5GB GPU memory)")
-        print(f"   Expected GPU usage: ~{num_workers * 5}GB")
-        
-        # Split pages into chunks for workers
-        chunk_size = max(1, len(all_page_images) // num_workers)
-        chunks = [all_page_images[i:i+chunk_size] 
-                 for i in range(0, len(all_page_images), chunk_size)]
-        
-        print(f"   Split into {len(chunks)} chunks of ~{chunk_size} pages each")
-        print(f"\n📊 Progress (each worker shows page-level progress):\n")
-        
-        # Process in parallel - each worker shows its own progress bar
-        all_embeddings = []
-        pool = None
-        try:
-            pool = Pool(processes=num_workers)
-            # Prepare arguments for each worker: (chunk, model_path, gpu, max_image_size, worker_id)
-            worker_args = [(chunk, model_path, gpu, max_image_size, i) 
-                          for i, chunk in enumerate(chunks)]
-            
-            # Use starmap to pass multiple arguments - workers will show their own progress
-            for embeddings in pool.starmap(process_batch_worker, worker_args):
-                all_embeddings.append(embeddings)
-        finally:
-            # Explicitly close and join pool to clean up resources
-            if pool is not None:
-                pool.close()
-                pool.join()
-        
-        # Combine all embeddings
-        all_embeddings = np.vstack(all_embeddings)
-        print(f"✅ Embeddings shape: {all_embeddings.shape}")
-        
-    else:
-        # Single worker (original sequential processing)
-        print("📄 Using single worker (sequential processing)")
-        
-        embedder_sdk = OfflineVLEmbedder(
-            model_path=model_path,
-            gpu=gpu,
-            gpu_memory=0.45,
-            max_image_size=max_image_size
-        )
-        
-        # Build embeddings in batches
-        print("Embedding pages...")
-        batch_size = 8
-        all_embeddings = []
-        
-        with tqdm(total=len(all_page_images), desc="📄 Processing pages", unit="page", 
-                  file=sys.stdout, dynamic_ncols=True, mininterval=0.5) as pbar:
-            for i in range(0, len(all_page_images), batch_size):
-                batch = all_page_images[i:i+batch_size]
-                
-                # Prepare inputs
-                inputs = [(text, image_path) for _, _, image_path, text in batch]
-                
-                # Embed
-                embeddings = embedder_sdk.embed_batch(inputs)
-                all_embeddings.append(embeddings)
-                
-                # Update progress
-                pbar.update(len(batch))
-        
-        # Combine embeddings
-        all_embeddings = np.vstack(all_embeddings)
-        print(f"✅ Embeddings shape: {all_embeddings.shape}")
-    
-    # Build FAISS index
-    print("Building FAISS index...")
+    # Process documents in batches for incremental saving
     import faiss
+    from multiprocessing import Pool
     
-    embed_dim = all_embeddings.shape[1]
-    index = faiss.IndexFlatIP(embed_dim)
+    # Create worker pool once for all batches (major optimization!)
+    worker_pool = None
+    if num_workers > 1:
+        print(f"⚡ Creating persistent worker pool with {num_workers} workers")
+        print(f"   Workers will load model once and process all batches")
+        worker_pool = Pool(processes=num_workers, 
+                          initializer=init_worker,
+                          initargs=(model_path, gpu, max_image_size))
     
-    # Normalize for cosine similarity
-    faiss.normalize_L2(all_embeddings)
-    index.add(all_embeddings)
+    try:
+        if save_every_n_docs > 0 and len(doc_ids_to_index) > save_every_n_docs:
+            print(f"📦 Incremental mode: saving every {save_every_n_docs} documents")
+            
+            # Process in batches
+            for batch_start in range(0, len(doc_ids_to_index), save_every_n_docs):
+                batch_end = min(batch_start + save_every_n_docs, len(doc_ids_to_index))
+                batch_doc_ids = doc_ids_to_index[batch_start:batch_end]
+                
+                print(f"\n{'='*60}")
+                print(f"Processing batch {batch_start//save_every_n_docs + 1}: docs {batch_start+1}-{batch_end}/{len(doc_ids_to_index)}")
+                print(f"{'='*60}")
+                
+                # Collect pages for this batch
+                batch_page_images = _collect_pages_for_docs(batch_doc_ids, store, config)
+                
+                if not batch_page_images:
+                    print("  ⚠️  No pages in this batch")
+                    continue
+                
+                # Embed this batch (reuse worker pool)
+                batch_embeddings = _embed_pages(
+                    batch_page_images, model_path, gpu, max_image_size, num_workers, pool=worker_pool
+                )
+                
+                # Combine with existing
+                all_page_images = existing_page_images + batch_page_images
+                
+                # Load existing embeddings if present
+                if existing_page_images and (index_dir / "dense_vl.index").exists():
+                    existing_index = faiss.read_index(str(index_dir / "dense_vl.index"))
+                    # Extract embeddings from index
+                    existing_embeddings = np.zeros((existing_index.ntotal, existing_index.d), dtype=np.float32)
+                    for i in range(existing_index.ntotal):
+                        existing_embeddings[i] = existing_index.reconstruct(i)
+                    all_embeddings = np.vstack([existing_embeddings, batch_embeddings])
+                else:
+                    all_embeddings = batch_embeddings
+                
+                # Build and save index
+                _save_index(index_dir, all_embeddings, all_page_images, tracker, batch_doc_ids, store)
+                
+                # Update existing for next iteration
+                existing_page_images = all_page_images
+                
+                print(f"✅ Batch saved: {len(all_page_images)} total pages indexed")
+        else:
+            # Process all at once (original behavior)
+            print("📦 Processing all documents at once")
+            
+            # Collect pages
+            new_page_images = _collect_pages_for_docs(doc_ids_to_index, store, config)
+            
+            if not new_page_images:
+                print("❌ No pages to index")
+                return
+            
+            # Combine with existing
+            all_page_images = existing_page_images + new_page_images
+            print(f"🔨 Total pages to embed: {len(all_page_images)}")
+            
+            # Embed all pages (reuse worker pool)
+            all_embeddings = _embed_pages(
+                new_page_images, model_path, gpu, max_image_size, num_workers, pool=worker_pool
+            )
+        
+        # Load existing embeddings if present
+        if existing_page_images and (index_dir / "dense_vl.index").exists():
+            existing_index = faiss.read_index(str(index_dir / "dense_vl.index"))
+            existing_embeddings = np.zeros((existing_index.ntotal, existing_index.d), dtype=np.float32)
+            for i in range(existing_index.ntotal):
+                existing_embeddings[i] = existing_index.reconstruct(i)
+            all_embeddings = np.vstack([existing_embeddings, all_embeddings])
+        
+            # Save index
+            _save_index(index_dir, all_embeddings, all_page_images, tracker, doc_ids_to_index, store)
+        
+        print(f"✅ Index saved to {index_dir}")
+        print(f"   Total pages: {len(all_page_images)}")
     
-    print(f"✅ FAISS index built: {index.ntotal} vectors")
-    
-    # Save index
-    print(f"Saving to {index_dir}...")
-    index_dir.mkdir(parents=True, exist_ok=True)
-    
-    faiss.write_index(index, str(index_dir / "dense_vl.index"))
-    
-    # Save metadata
-    page_ids = [(doc_id, page_id) for doc_id, page_id, _, _ in all_page_images]
-    page_metadata = {}
-    for doc_id, page_id, image_path, text in all_page_images:
-        page_key = f"{doc_id}__page{page_id:04d}"
-        page_metadata[page_key] = {
-            "doc_id": doc_id,
-            "page_id": page_id,
-            "image_path": image_path,
-            "text": text
-        }
-    
-    metadata = {
-        "index_type": "Flat",
-        "nlist": 100,
-        "nprobe": 10,
-        "embed_dim": embed_dim,
-        "num_pages": len(page_ids),
-        "page_ids": page_ids,
-        "page_metadata": page_metadata
-    }
-    
-    with open(index_dir / "metadata.json", 'w') as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
-    
-    tracker.save()
-    
-    print(f"✅ Index saved to {index_dir}")
-    print(f"   Total pages: {len(page_ids)}")
-    print(f"   Embedding dim: {embed_dim}")
+    finally:
+        # Clean up worker pool
+        if worker_pool is not None:
+            print("🔧 Shutting down worker pool...")
+            worker_pool.close()
+            worker_pool.join()
+            print("✅ Worker pool closed")
 
 
 if __name__ == "__main__":
@@ -517,6 +619,8 @@ if __name__ == "__main__":
                        help="Max image size (px) on longest side. Default: from config or 1024")
     parser.add_argument("--num-workers", type=int, default=None,
                        help="Number of parallel workers. Each uses ~5GB GPU. Default: from config or 1")
+    parser.add_argument("--save-every-n-docs", type=int, default=50,
+                       help="Save index after processing N documents. 0=save only at end. Default: 50")
     
     args = parser.parse_args()
     
@@ -538,5 +642,6 @@ if __name__ == "__main__":
         index_name=args.index_name,
         force_rebuild=args.force_rebuild,
         max_image_size=max_image_size,
-        num_workers=num_workers
+        num_workers=num_workers,
+        save_every_n_docs=args.save_every_n_docs
     )

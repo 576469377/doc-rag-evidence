@@ -34,6 +34,7 @@ class Task:
     completed_at: Optional[str] = None
     error_message: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
+    process_pid: Optional[int] = None  # Track subprocess PID
     
     def to_dict(self):
         return asdict(self)
@@ -195,12 +196,65 @@ class TaskManager:
         
         self._save_task(task)
     
+    def update_task_pid(self, task_id: str, pid: int):
+        """Update task's subprocess PID."""
+        task = self.tasks.get(task_id)
+        if not task:
+            return
+        
+        with self.lock:
+            task.process_pid = pid
+        
+        self._save_task(task)
+    
     def get_task(self, task_id: str) -> Optional[Task]:
         """Get task by ID."""
         return self.tasks.get(task_id)
     
-    def list_tasks(self, task_type: Optional[str] = None, limit: int = 50) -> List[Task]:
+    def list_tasks(self, task_type: Optional[str] = None, limit: int = 50, check_stale: bool = True) -> List[Task]:
         """List all tasks, optionally filtered by type."""
+        import os
+        import signal
+        from dateutil import parser as date_parser
+        
+        # Check running tasks and mark failed if process is dead or stale
+        if check_stale:
+            now = datetime.now()
+            
+            for task in list(self.tasks.values()):
+                if task.status == TaskStatus.RUNNING:
+                    should_mark_failed = False
+                    failure_reason = None
+                    
+                    # Check 1: If task has PID, check if process still exists
+                    if task.process_pid:
+                        try:
+                            os.kill(task.process_pid, 0)  # Signal 0 just checks existence
+                        except (OSError, ProcessLookupError):
+                            # Process doesn't exist
+                            should_mark_failed = True
+                            failure_reason = f"Process (PID {task.process_pid}) terminated unexpectedly"
+                    
+                    # Check 2: If task has no PID (old tasks), check if it's stale (no update for 10 minutes)
+                    elif not task.process_pid and task.started_at:
+                        try:
+                            started_time = date_parser.isoparse(task.started_at)
+                            # If task has been running for more than 30 minutes without PID, consider it stale
+                            elapsed_minutes = (now - started_time).total_seconds() / 60
+                            if elapsed_minutes > 30:
+                                should_mark_failed = True
+                                failure_reason = f"Task stale: started {elapsed_minutes:.0f} min ago without process tracking"
+                        except Exception:
+                            pass
+                    
+                    # Mark as failed if needed
+                    if should_mark_failed:
+                        with self.lock:
+                            task.status = TaskStatus.FAILED
+                            task.completed_at = now.isoformat()
+                            task.error_message = failure_reason
+                        self._save_task(task)
+        
         tasks = list(self.tasks.values())
         
         if task_type:

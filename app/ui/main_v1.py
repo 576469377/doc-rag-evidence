@@ -1125,12 +1125,28 @@ class DocRAGUIV1:
             progress_pct = f"{task.progress * 100:.1f}%"
             created_time = task.created_at[:19].replace('T', ' ')  # Truncate to minutes
             
+            # Add status emoji
+            status_emoji = {
+                "pending": "⏳",
+                "running": "▶️",
+                "completed": "✓",
+                "failed": "❌",
+                "cancelled": "🚫"
+            }
+            status_display = f"{status_emoji.get(task.status.value, '❓')} {task.status.value}"
+            
+            # Current step or error message
+            if task.status.value == "failed" and task.error_message:
+                current_info = f"❌ {task.error_message[:40]}"
+            else:
+                current_info = task.current_step[:40]
+            
             rows.append([
                 task_id_short,
                 task.task_type,
-                task.status.value,
+                status_display,
                 progress_pct,
-                task.current_step[:40],  # Truncate long steps
+                current_info,
                 created_time
             ])
         
@@ -1143,6 +1159,205 @@ class DocRAGUIV1:
         
         message = f"✅ Cleared {removed} old tasks (kept 5 most recent)"
         return message, tasks_rows
+
+    def _run_dense_vl_indexing(self, task_id: str, task_manager, index_name: str, gpu_id: int):
+        """Background task function for Dense-VL indexing."""
+        import subprocess
+        import os
+        import re
+        
+        script_path = Path(__file__).parent.parent.parent / "scripts" / "build_dense_vl_index.py"
+        
+        # Prepare environment with GPU setting
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        
+        # Update task
+        task_manager.update_task_progress(
+            task_id,
+            current_step=f"Starting Dense-VL indexing on GPU {gpu_id}...",
+            progress=0.0
+        )
+        
+        try:
+            # Run the script
+            process = subprocess.Popen(
+                ["python", "-u", str(script_path), "--index-name", index_name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            # Save PID for tracking
+            task_manager.update_task_pid(task_id, process.pid)
+            
+            # Monitor progress from script output
+            output_lines = []
+            total_pages = None
+            processed_pages = 0
+            
+            for line in process.stdout:
+                output_lines.append(line.rstrip())
+                clean_line = line.strip()
+                
+                # Extract total pages count
+                if "Total pages to embed:" in clean_line:
+                    match = re.search(r'Total pages to embed:\s*(\d+)', clean_line)
+                    if match:
+                        total_pages = int(match.group(1))
+                        task_manager.update_task_progress(
+                            task_id,
+                            current_step=f"Total pages: {total_pages}",
+                            progress=0.01
+                        )
+                
+                # Extract worker progress from tqdm-style progress bars
+                # Format: "Worker 0:  45%|████▌     | 100/225 [00:30<00:37,  3.33page/s]"
+                elif "Worker" in clean_line and "|" in clean_line:
+                    match = re.search(r'(\d+)/(\d+)', clean_line)
+                    if match:
+                        current = int(match.group(1))
+                        worker_total = int(match.group(2))
+                        # Update current step but don't calculate global progress yet
+                        # (we need to aggregate all workers)
+                        task_manager.update_task_progress(
+                            task_id,
+                            current_step=clean_line[:100]
+                        )
+                
+                # Extract batch save progress
+                elif "Batch saved:" in clean_line and "total pages indexed" in clean_line:
+                    match = re.search(r'(\d+)\s+total pages indexed', clean_line)
+                    if match:
+                        processed_pages = int(match.group(1))
+                        if total_pages and total_pages > 0:
+                            progress = min(0.95, processed_pages / total_pages)
+                            task_manager.update_task_progress(
+                                task_id,
+                                current_step=f"Saved: {processed_pages}/{total_pages} pages",
+                                progress=progress
+                            )
+                
+                # Extract embeddings shape (indicates encoding done)
+                elif "Embeddings shape:" in clean_line:
+                    task_manager.update_task_progress(
+                        task_id,
+                        current_step="Building FAISS index...",
+                        progress=0.9
+                    )
+                
+                # Final save
+                elif "Index saved to" in clean_line:
+                    match = re.search(r'Total pages:\s*(\d+)', clean_line)
+                    if match:
+                        final_pages = int(match.group(1))
+                        task_manager.update_task_progress(
+                            task_id,
+                            current_step=f"Complete: {final_pages} pages indexed",
+                            progress=0.95
+                        )
+            
+            process.wait()
+            
+            if process.returncode != 0:
+                raise Exception(f"Script failed with exit code {process.returncode}")
+            
+            # Reset retriever to trigger lazy reload
+            if "dense_vl" in self.retrievers:
+                self.retrievers["dense_vl"] = None
+                
+        except Exception as e:
+            # Re-raise the exception so TaskManager marks it as failed
+            raise
+        
+        # Update config
+        dense_vl_index_dir = Path(self.config.indices_dir) / index_name
+        if dense_vl_index_dir.exists():
+            self._dense_vl_config = {
+                "index_dir": dense_vl_index_dir,
+                "model_path": self.config.dense_vl["model_path"],
+                "gpu": self.config.dense_vl.get("gpu", 1),
+                "gpu_memory": self.config.dense_vl.get("gpu_memory", 0.45),
+                "batch_size": self.config.dense_vl.get("batch_size", 8),
+                "max_image_size": self.config.dense_vl.get("max_image_size", 1024)
+            }
+        
+        return {
+            "index_name": index_name,
+            "status": "success",
+            "message": "Dense-VL index built successfully"
+        }
+
+    def _run_colpali_indexing(self, task_id: str, task_manager, index_name: str, device: str, suffix: str):
+        """Background task function for ColPali indexing."""
+        from impl.index_incremental import IncrementalIndexManager
+        from impl.index_colpali import ColPaliRetriever
+        
+        try:
+            # Update task
+            task_manager.update_task_progress(
+                task_id,
+                current_step=f"Starting ColPali indexing on {device}...",
+                progress=0.0
+            )
+            
+            # Note: ColPali uses internal model process, not subprocess
+            # So we don't have a PID to track here
+            
+            # Initialize index manager
+            index_manager = IncrementalIndexManager(self.config, self.store)
+            
+            # Update ColPali index
+            task_manager.update_task_progress(
+                task_id,
+                current_step="Building ColPali index...",
+                progress=0.1
+            )
+            
+            result = index_manager.update_colpali_index(
+                index_name=index_name
+            )
+            
+            if result["status"] == "success":
+                task_manager.update_task_progress(
+                    task_id,
+                    current_step=f"Loading retriever model...",
+                    progress=0.8
+                )
+                
+                # Reload retriever
+                retriever = ColPaliRetriever(
+                    model_name=self.config.colpali["model"],
+                    device=device,
+                    max_global_pool_pages=self.config.colpali.get("max_global_pool", 100),
+                    max_image_size=self.config.colpali.get("max_image_size", 1024)
+                )
+                index_dir = Path(self.config.indices_dir) / index_name
+                retriever.load_instance(index_dir)
+                self.retrievers["colpali"] = retriever
+                
+                task_manager.update_task_progress(
+                    task_id,
+                    current_step=f"ColPali index ready: {result['total_pages']} pages",
+                    progress=1.0
+                )
+                
+                return {
+                    "index_name": index_name,
+                    "status": "success",
+                    "new_docs": result['new_docs'],
+                    "new_pages": result['new_pages'],
+                    "total_pages": result['total_pages']
+                }
+            else:
+                raise Exception(result.get("message", "Failed to build index"))
+                
+        except Exception as e:
+            # Re-raise the exception so TaskManager marks it as failed
+            raise
 
     def _handle_build_indices(
         self,
@@ -1313,169 +1528,94 @@ class DocRAGUIV1:
                     status += f"{traceback.format_exc()}\n"
                 yield status
             
-            # Dense-VL incremental build/update
+            # Dense-VL incremental build/update (background task)
             elif index_type == "dense_vl":
                 status += "\n" + "─" * 50 + "\n"
-                status += "⏳ Dense-VL Index Update\n"
+                status += "⏳ Dense-VL Index Update (Background Task)\n"
                 status += "─" * 50 + "\n"
                 try:
-                    # Use offline script to build Dense-VL index
-                    import subprocess
-                    import re
-                    script_path = Path(__file__).parent.parent.parent / "scripts" / "build_dense_vl_index.py"
-                    
-                    # Prepare environment with GPU setting
-                    env = os.environ.copy()
-                    gpu_id = self.config.dense_vl.get("gpu", 1)
-                    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-                    status += f"📍 Using GPU: {gpu_id}\n"
+                    import uuid
                     
                     # Build index name with suffix
                     index_name = f"dense_vl_{suffix}"
-                    status += f"📝 Index name: {index_name}\n"
+                    gpu_id = self.config.dense_vl.get("gpu", 1)
                     
-                    # Run offline build script with streaming output
-                    process = subprocess.Popen(
-                        ["python", "-u", str(script_path), "--index-name", index_name],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        env=env,
-                        bufsize=1,  # Line buffered
-                        universal_newlines=True
+                    status += f"📝 Index name: {index_name}\n"
+                    status += f"📍 Using GPU: {gpu_id}\n"
+                    
+                    # Submit as background task
+                    task_id = f"index_dense_vl_{uuid.uuid4().hex[:8]}"
+                    
+                    # Get document count for progress tracking
+                    docs = self.store.list_documents()
+                    total_pages = sum(doc.page_count for doc in docs)
+                    
+                    task = self.task_manager.submit_task(
+                        task_id=task_id,
+                        task_type="index_dense_vl",
+                        func=self._run_dense_vl_indexing,
+                        args=(index_name, gpu_id),
+                        kwargs={},
+                        total_items=total_pages,
+                        description=f"Building Dense-VL index: {index_name}"
                     )
                     
-                    # Filter function to show only important lines
-                    def should_show_line(line: str) -> bool:
-                        """Filter out technical details and keep only important status."""
-                        line = line.strip()
-                        if not line:
-                            return False
-                        
-                        # Skip these patterns
-                        skip_patterns = [
-                            "Imported Qwen3VLEmbedder",
-                            "Loading Qwen3VL Embedding model",
-                            "Original GPU ID",
-                            "Image resize:",
-                            "Using device",
-                            "CUDA_VISIBLE_DEVICES",
-                            "Using Flash Attention",
-                            "Model loaded on",
-                            "Calling offline build script",
-                            "Script:",
-                            "Each worker loads",
-                            "Expected GPU usage",
-                            "Split into",
-                            "Progress (each worker",
-                            "Worker ",  # Skip individual worker progress lines
-                            "[A",  # Skip ANSI escape sequences
-                        ]
-                        
-                        for pattern in skip_patterns:
-                            if pattern in line:
-                                return False
-                        
-                        # Show these important patterns
-                        show_patterns = [
-                            "Found",
-                            "document",
-                            "New documents:",
-                            "pages",
-                            "Total pages to embed:",
-                            "Set CUDA_VISIBLE_DEVICES",
-                            "Using",
-                            "parallel workers",
-                            "Embeddings shape:",
-                            "Index saved",
-                            "Total",
-                            "Embedding dim:",
-                            "✅",
-                            "❌",
-                            "⚠️",
-                            "🔨",
-                            "📚",
-                            "📝",
-                            "⚡",
-                        ]
-                        
-                        for pattern in show_patterns:
-                            if pattern in line:
-                                return True
-                        
-                        return False
+                    status += f"✅ Task submitted: {task_id}\n"
+                    status += f"   Total pages to process: {total_pages}\n"
+                    status += f"   Check 'Background Tasks' tab for progress\n"
+                    # Estimate time: ~0.05-0.13 sec/page for Dense-VL
+                    est_min = int(total_pages * 0.05 / 60)
+                    est_max = int(total_pages * 0.13 / 60)
+                    status += f"\n💡 This is a long-running task (~{est_min}-{est_max} minutes for {total_pages:,} pages)\n"
+                    status += f"   You can close this window and check progress later\n"
                     
-                    # Stream filtered output in real-time
-                    output_lines = []
-                    for line in process.stdout:
-                        if should_show_line(line):
-                            # Remove ANSI escape sequences
-                            clean_line = re.sub(r'\x1b\[[0-9;]*[mGKHJA]', '', line)
-                            status += clean_line
-                            output_lines.append(clean_line.rstrip())
-                            yield status  # Update UI in real-time
-                    
-                    process.wait()
-                    
-                    if process.returncode == 0:
-                        # Reset retriever to None (will lazy load on next use)
-                        self.retrievers["dense_vl"] = None
-                        
-                        # Update config to point to new index
-                        dense_vl_index_dir = Path(self.config.indices_dir) / f"dense_vl_{suffix}"
-                        if dense_vl_index_dir.exists():
-                            self._dense_vl_config = {
-                                "index_dir": dense_vl_index_dir,
-                                "model_path": self.config.dense_vl["model_path"],
-                                "gpu": self.config.dense_vl.get("gpu", 1),
-                                "gpu_memory": self.config.dense_vl.get("gpu_memory", 0.45),
-                                "batch_size": self.config.dense_vl.get("batch_size", 8)
-                            }
-                        
-                        status += f"\n✅ Dense-VL index built successfully (offline mode)\n"
-                        status += f"   Index will lazy-load on first query\n"
-                    else:
-                        status += f"\n❌ Build script failed with exit code {process.returncode}\n"
-                        
                 except Exception as e:
                     import traceback
                     status += f"❌ Error: {str(e)}\n"
                     status += f"{traceback.format_exc()}\n"
                 yield status
             
-            # ColPali incremental build/update
+            # ColPali incremental build/update (background task)
             elif index_type == "colpali":
                 status += "\n" + "─" * 50 + "\n"
-                status += "⏳ ColPali Index Update\n"
+                status += "⏳ ColPali Index Update (Background Task)\n"
                 status += "─" * 50 + "\n"
                 try:
-                    result = index_manager.update_colpali_index(
-                        index_name=f"colpali_{suffix}"
+                    import uuid
+                    
+                    # Build index name with suffix
+                    index_name = f"colpali_{suffix}"
+                    device = self.config.colpali.get("device", "cuda:2")
+                    
+                    status += f"📝 Index name: {index_name}\n"
+                    status += f"📍 Using Device: {device}\n"
+                    
+                    # Submit as background task
+                    task_id = f"index_colpali_{uuid.uuid4().hex[:8]}"
+                    
+                    # Get document count for progress tracking
+                    docs = self.store.list_documents()
+                    total_pages = sum(doc.page_count for doc in docs)
+                    
+                    task = self.task_manager.submit_task(
+                        task_id=task_id,
+                        task_type="index_colpali",
+                        func=self._run_colpali_indexing,
+                        args=(index_name, device, suffix),
+                        kwargs={},
+                        total_items=total_pages,
+                        description=f"Building ColPali index: {index_name}"
                     )
                     
-                    if result["status"] == "success":
-                        # Reload retriever
-                        device = self.config.colpali.get("device", "cuda:2")
-                        retriever = ColPaliRetriever(
-                            model_name=self.config.colpali["model"],
-                            device=device,
-                            max_global_pool_pages=self.config.colpali.get("max_global_pool", 100),
-                            max_image_size=self.config.colpali.get("max_image_size", 1024)
-                        )
-                        index_dir = Path(self.config.indices_dir) / f"colpali_{suffix}"
-                        retriever.load_instance(index_dir)
-                        self.retrievers["colpali"] = retriever
-                        
-                        status += f"✅ Success!\n"
-                        status += f"   New documents: {result['new_docs']}\n"
-                        status += f"   New pages: {result['new_pages']}\n"
-                        status += f"   Total: {result['total_pages']} pages\n"
-                        status += f"   Device: {device}\n"
-                    elif result["status"] == "no_update":
-                        status += f"ℹ️  {result['message']}\n"
-                        status += f"   All documents already indexed\n"
-                    else:
-                        status += f"❌ {result['message']}\n"
+                    status += f"✅ Task submitted: {task_id}\n"
+                    status += f"   Total pages to process: {total_pages}\n"
+                    status += f"   Check 'Background Tasks' tab for progress\n"
+                    # Estimate time: ~0.02-0.06 sec/page for ColPali
+                    est_min = int(total_pages * 0.02 / 60)
+                    est_max = int(total_pages * 0.06 / 60)
+                    status += f"\n💡 This is a long-running task (~{est_min}-{est_max} minutes for {total_pages:,} pages)\n"
+                    status += f"   You can close this window and check progress later\n"
+                    
                 except Exception as e:
                     import traceback
                     status += f"❌ Error: {str(e)}\n"
