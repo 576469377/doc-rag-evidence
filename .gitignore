@@ -1,9 +1,5 @@
 # Data directories (keep structure, ignore content)
-data/docs/
-data/indices/
-data/runs/
-data/reports/
-data/tasks/
+/data
 
 # External repositories (cloned for development)
 Qwen3-VL-Embedding/
@@ -49,3 +45,5 @@ test*.py
 *~
 .pytest_cache/
 .coverage
+
+/docs
