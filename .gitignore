@@ -1,5 +1,9 @@
-data/
-docs/
+# Data directories (keep structure, ignore content)
+data/docs/
+data/indices/
+data/runs/
+data/reports/
+data/tasks/
 
 # External repositories (cloned for development)
 Qwen3-VL-Embedding/
@@ -36,5 +40,12 @@ FINAL_UPDATE_SUMMARY.md
 # Debug and utility scripts
 debug_*.py
 count_py_lines.py
-
 test*.py
+
+# Temporary and backup files
+*.tmp
+*.bak
+*.swp
+*~
+.pytest_cache/
+.coverage

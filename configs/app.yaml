@@ -74,12 +74,16 @@ dense:
 colpali:
   enabled: true                     # Enable vision retrieval
   model: "/workspace/cache/tomoro-colqwen3-embed-4b"  # ColQwen3 local model path
-  device: "cuda:2"                  # CUDA device for model
+  gpu: 2                            # GPU device ID (0, 1, 2, etc.)
   batch_size: 8                     # Batch size for inference
   max_global_pool: 100              # Coarse stage top-N
   max_image_size: 1024              # Max image size (px) on longest side
                                     # 1024=fast, 2048=quality, null=original
-                                    # Enables 2 models on one GPU (ColPali+Dense-VL)
+  num_workers: 2                    # Parallel workers for indexing (multiprocessing)
+                                    # Each worker uses ~8-9GB GPU memory
+                                    # Main process does NOT load model (lazy_load=True)
+                                    # Recommended: 2 workers for 24GB GPU
+                                    #              1 worker for 12GB GPU
 
 # ===== Dense-VL Multimodal Retrieval (V1.2+) =====
 dense_vl:

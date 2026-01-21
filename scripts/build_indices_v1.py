@@ -166,9 +166,11 @@ def build_colpali_index(config: AppConfig, store: DocumentStoreLocal):
         return
     
     # Create retriever
+    gpu_id = colpali_config.get("gpu", 0)
+    device = f"cuda:{gpu_id}"
     retriever = ColPaliRetriever(
         model_name=colpali_config["model"],
-        device=colpali_config.get("device", "cuda:0"),
+        device=device,
         max_global_pool_pages=colpali_config.get("max_global_pool", 100),
         cache_dir=Path(colpali_config.get("cache_dir", "data/cache/colpali"))
     )

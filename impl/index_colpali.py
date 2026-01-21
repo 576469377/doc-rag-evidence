@@ -1,6 +1,7 @@
 """
 ColPali-based vision retrieval for document pages.
 Two-stage retrieval: coarse (global vectors) + fine (late interaction).
+Supports multiprocessing for faster indexing.
 """
 from typing import List, Optional, Tuple, Union, TYPE_CHECKING
 from pathlib import Path
@@ -29,6 +30,113 @@ from PIL import Image
 from core.schemas import RetrieveHit, AppConfig
 
 
+# Global worker embedder for multiprocessing (similar to Dense-VL)
+_worker_colpali_model = None
+_worker_colpali_processor = None
+_worker_colpali_device = None
+_worker_colpali_max_image_size = None
+
+
+def init_colpali_worker(model_path: str, gpu: int, max_image_size: int = None):
+    """
+    Initialize ColPali model in worker process.
+    Called once per worker when pool is created.
+    
+    Args:
+        model_path: Path to ColPali model
+        gpu: GPU device ID to use (e.g., 0, 1, 2, 3)
+        max_image_size: Max image size for resizing
+    """
+    global _worker_colpali_model, _worker_colpali_processor, _worker_colpali_device, _worker_colpali_max_image_size
+    
+    import os
+    import torch
+    from transformers import AutoProcessor, AutoModel
+    
+    # Use the specified GPU directly
+    device = f"cuda:{gpu}"
+    _worker_colpali_device = device
+    _worker_colpali_max_image_size = max_image_size
+    
+    # Load model and processor
+    print(f"[Worker {os.getpid()}] Loading ColPali model on GPU {gpu} ({device})...")
+    _worker_colpali_processor = AutoProcessor.from_pretrained(
+        model_path,
+        trust_remote_code=True,
+        max_num_visual_tokens=1280
+    )
+    
+    try:
+        _worker_colpali_model = AutoModel.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+            attn_implementation="flash_attention_2",
+            device_map=device
+        ).eval()
+        print(f"[Worker {os.getpid()}] ✅ Model loaded with Flash Attention 2 on GPU {gpu}")
+    except:
+        _worker_colpali_model = AutoModel.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+            device_map=device
+        ).eval()
+        print(f"[Worker {os.getpid()}] ✅ Model loaded (standard attention) on GPU {gpu}")
+
+
+def process_colpali_batch_worker(batch_data):
+    """
+    Worker function to process a batch of pages.
+    Uses global _worker_colpali_model initialized by init_colpali_worker.
+    
+    Args:
+        batch_data: List of (doc_id, page_id, image_path) tuples
+        
+    Returns:
+        List of (doc_id, page_id, global_vec, patch_vecs) tuples
+    """
+    global _worker_colpali_model, _worker_colpali_processor, _worker_colpali_device, _worker_colpali_max_image_size
+    
+    import torch
+    from PIL import Image
+    import numpy as np
+    
+    results = []
+    
+    for doc_id, page_id, image_path in batch_data:
+        try:
+            # Load and optionally resize image
+            image = Image.open(image_path).convert("RGB")
+            
+            if _worker_colpali_max_image_size:
+                w, h = image.size
+                max_dim = max(w, h)
+                if max_dim > _worker_colpali_max_image_size:
+                    scale = _worker_colpali_max_image_size / max_dim
+                    new_w = int(w * scale)
+                    new_h = int(h * scale)
+                    image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            
+            # Process image
+            batch = _worker_colpali_processor.process_images(images=[image])
+            batch = {k: v.to(_worker_colpali_device) for k, v in batch.items()}
+            
+            # Get embeddings
+            with torch.no_grad():
+                outputs = _worker_colpali_model(**batch)
+                patch_vecs = outputs.embeddings[0].cpu().float().numpy()
+                global_vec = patch_vecs.mean(axis=0)
+            
+            results.append((doc_id, page_id, global_vec, patch_vecs))
+            
+        except Exception as e:
+            print(f"⚠️  Error processing {doc_id} page {page_id}: {e}")
+            continue
+    
+    return results
+
+
 @dataclass
 class PageVectorStore:
     """Store for page-level embeddings."""
@@ -52,7 +160,8 @@ class ColPaliRetriever:
         device: str = "cuda:0",
         max_global_pool_pages: int = 100,
         cache_dir: Optional[Path] = None,
-        max_image_size: int = None
+        max_image_size: int = None,
+        lazy_load: bool = False
     ):
         """
         Initialize ColPali retriever.
@@ -63,6 +172,7 @@ class ColPaliRetriever:
             max_global_pool_pages: Max pages to retrieve in coarse stage
             cache_dir: Optional cache directory for embeddings
             max_image_size: Max image size (pixels) on longest side. If None, use original size.
+            lazy_load: If True, don't load model (useful for multiprocessing coordinator)
         """
         if torch is None or AutoProcessor is None:
             raise ImportError("transformers and torch required. Install with: pip install transformers torch")
@@ -75,41 +185,47 @@ class ColPaliRetriever:
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.max_image_size = max_image_size
         
-        # Load model and processor
-        print(f"Loading ColPali model: {model_name} on {device}")
-        self.processor = AutoProcessor.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            max_num_visual_tokens=1280  # ColQwen3 parameter
-        )
+        # Vector store
+        self.store: Optional[PageVectorStore] = None
+        self.index: Optional[faiss.Index] = None
         
-        # Try to use Flash Attention 2 for speedup
-        try:
-            self.model = AutoModel.from_pretrained(
+        # Load model unless lazy_load is True
+        if lazy_load:
+            print(f"ColPali initialized in lazy mode (model not loaded, saves ~7GB GPU memory)")
+            self.model = None
+            self.processor = None
+        else:
+            # Load model and processor
+            print(f"Loading ColPali model: {model_name} on {device}")
+            self.processor = AutoProcessor.from_pretrained(
                 model_name,
                 trust_remote_code=True,
-                torch_dtype=torch.bfloat16,
-                attn_implementation="flash_attention_2",
-                device_map=device
-            ).eval()
-            print("  ✅ Using Flash Attention 2 (fast)")
-        except Exception as e:
-            # Fallback to standard attention if flash-attn not available
-            if "flash_attn" in str(e).lower() or "flash" in str(e).lower():
-                print("  ⚠️  Flash Attention 2 not available, using standard attention (slower)")
-                print("     To enable: pip install flash-attn --no-build-isolation")
+                max_num_visual_tokens=1280  # ColQwen3 parameter
+            )
+            
+            # Try to use Flash Attention 2 for speedup
+            try:
                 self.model = AutoModel.from_pretrained(
                     model_name,
                     trust_remote_code=True,
                     torch_dtype=torch.bfloat16,
+                    attn_implementation="flash_attention_2",
                     device_map=device
                 ).eval()
-            else:
-                raise
-        
-        # Vector store
-        self.store: Optional[PageVectorStore] = None
-        self.index: Optional[faiss.Index] = None
+                print("  ✅ Using Flash Attention 2 (fast)")
+            except Exception as e:
+                # Fallback to standard attention if flash-attn not available
+                if "flash_attn" in str(e).lower() or "flash" in str(e).lower():
+                    print("  ⚠️  Flash Attention 2 not available, using standard attention (slower)")
+                    print("     To enable: pip install flash-attn --no-build-isolation")
+                    self.model = AutoModel.from_pretrained(
+                        model_name,
+                        trust_remote_code=True,
+                        torch_dtype=torch.bfloat16,
+                        device_map=device
+                    ).eval()
+                else:
+                    raise
     
     def _resize_image_if_needed(self, image_path: str) -> str:
         """Resize image if needed to reduce GPU memory usage. Returns path to (possibly resized) image."""
@@ -176,7 +292,6 @@ class ColPaliRetriever:
             except Exception as e:
                 print(f"Warning: Failed to save cached embeddings: {e}")
     
-    @torch.no_grad()
     def _embed_image(self, image_path: str) -> Tuple[np.ndarray, np.ndarray]:
         """
         Embed a single page image using ColQwen3 API.
@@ -197,7 +312,8 @@ class ColPaliRetriever:
                    for k, v in features.items()}
         
         # Get embeddings
-        outputs = self.model(**features)
+        with torch.no_grad():
+            outputs = self.model(**features)
         
         # Extract embeddings - ColQwen3 returns .embeddings attribute
         # Shape: [1, num_patches, embed_dim]
@@ -209,7 +325,6 @@ class ColPaliRetriever:
         
         return global_vec, patch_vecs
     
-    @torch.no_grad()
     def _embed_query(self, query: str) -> np.ndarray:
         """
         Embed a text query using ColQwen3 API.
@@ -222,7 +337,8 @@ class ColPaliRetriever:
         batch = {k: v.to(self.device) for k, v in batch.items()}
         
         # Get embeddings
-        outputs = self.model(**batch)
+        with torch.no_grad():
+            outputs = self.model(**batch)
         
         # Extract token embeddings - ColQwen3 returns .embeddings attribute
         # Convert bfloat16 to float32 before numpy conversion (numpy doesn't support bfloat16)
@@ -230,7 +346,6 @@ class ColPaliRetriever:
         
         return query_vecs
     
-    @torch.no_grad()
     def _embed_images_batch(self, image_paths: List[str], batch_size: int = 16) -> List[Tuple[np.ndarray, np.ndarray]]:
         """
         批量embed图像，提升索引构建速度。
@@ -259,7 +374,8 @@ class ColPaliRetriever:
                        for k, v in features.items()}
             
             # Get embeddings
-            outputs = self.model(**features)
+            with torch.no_grad():
+                outputs = self.model(**features)
             
             # Extract embeddings for each image in batch
             # Shape: [batch_size, num_patches, embed_dim]
@@ -275,7 +391,8 @@ class ColPaliRetriever:
     def build_index(
         self,
         page_data: Union[List[Tuple[str, int]], List[Tuple[str, int, str]]],
-        config: Optional[AppConfig] = None
+        config: Optional[AppConfig] = None,
+        num_workers: int = 1
     ):
         """
         Build index from page images.
@@ -285,6 +402,7 @@ class ColPaliRetriever:
                 - List of (doc_id, page_id) tuples (requires config to locate images)
                 - List of (doc_id, page_id, image_path) tuples (deprecated)
             config: AppConfig (required if page_data is (doc_id, page_id) format)
+            num_workers: Number of parallel workers (multiprocessing)
         """
         print(f"Building ColPali index for {len(page_data)} pages...")
         
@@ -292,9 +410,8 @@ class ColPaliRetriever:
         global_vectors = []
         patch_vectors = []
         
-        # 第一步：收集所有需要处理的图像
+        # Collect all items to process
         items_to_process = []  # (doc_id, page_id, image_path)
-        items_cached = []  # (doc_id, page_id, global_vec, patch_vecs)
         
         for item in page_data:
             if len(item) == 2:
@@ -312,28 +429,22 @@ class ColPaliRetriever:
                 print(f"⚠️  Warning: Image not found: {image_path}")
                 continue
             
-            # Check cache
-            cached = self._load_cached_embeddings(doc_id, page_id)
-            if cached:
-                items_cached.append((doc_id, page_id, cached[0], cached[1]))
-            else:
-                items_to_process.append((doc_id, page_id, image_path))
+            items_to_process.append((doc_id, page_id, image_path))
         
-        # 第二步：批量处理未缓存的图像（并行加速）
-        if items_to_process:
-            print(f"⏳ 批量处理 {len(items_to_process)} 个图像（batch_size=16）...")
-            image_paths = [item[2] for item in items_to_process]
-            embeddings = self._embed_images_batch(image_paths, batch_size=16)
-            
-            # Save to cache and collect
-            for (doc_id, page_id, _), (global_vec, patch_vecs) in zip(items_to_process, embeddings):
-                self._save_cached_embeddings(doc_id, page_id, global_vec, patch_vecs)
-                page_ids.append((doc_id, page_id))
-                global_vectors.append(global_vec)
-                patch_vectors.append(patch_vecs)
+        if not items_to_process:
+            raise ValueError("No valid pages found to build index")
         
-        # 第三步：添加缓存的数据
-        for doc_id, page_id, global_vec, patch_vecs in items_cached:
+        # Process pages with multiprocessing if num_workers > 1
+        if num_workers > 1:
+            print(f"⚡ Using {num_workers} parallel workers for embedding...")
+            print(f"   Main process will not load model (saves ~7GB GPU memory)")
+            results = self._embed_pages_multiprocess(items_to_process, num_workers)
+        else:
+            print(f"⏳ Processing {len(items_to_process)} pages (single process)...")
+            results = self._embed_pages_batch(items_to_process)
+        
+        # Collect results
+        for doc_id, page_id, global_vec, patch_vecs in results:
             page_ids.append((doc_id, page_id))
             global_vectors.append(global_vec)
             patch_vectors.append(patch_vecs)
@@ -364,7 +475,8 @@ class ColPaliRetriever:
     def add_pages(
         self,
         page_data: Union[List[Tuple[str, int]], List[Tuple[str, int, str]]],
-        config: Optional[AppConfig] = None
+        config: Optional[AppConfig] = None,
+        num_workers: int = 1
     ):
         """
         Add new pages to existing index (incremental update).
@@ -372,10 +484,11 @@ class ColPaliRetriever:
         Args:
             page_data: List of (doc_id, page_id) or (doc_id, page_id, image_path) tuples
             config: AppConfig (required if using (doc_id, page_id) format)
+            num_workers: Number of parallel workers (multiprocessing)
         """
         if self.index is None or self.store is None:
             # No existing index, just build from scratch
-            return self.build_index(page_data, config)
+            return self.build_index(page_data, config, num_workers=num_workers)
         
         print(f"Adding {len(page_data)} new pages to ColPali index...")
         
@@ -383,9 +496,8 @@ class ColPaliRetriever:
         new_global_vectors = []
         new_patch_vectors = []
         
-        # 收集需要处理的图像（与build_index相同的批量处理逻辑）
+        # Collect items to process
         items_to_process = []  # (doc_id, page_id, image_path)
-        items_cached = []  # (doc_id, page_id, global_vec, patch_vecs)
         
         for item in page_data:
             if len(item) == 2:
@@ -409,34 +521,28 @@ class ColPaliRetriever:
                 print(f"⚠️  Warning: Image not found: {image_path}")
                 continue
             
-            # Check cache
-            cached = self._load_cached_embeddings(doc_id, page_id)
-            if cached:
-                items_cached.append((doc_id, page_id, cached[0], cached[1]))
-            else:
-                items_to_process.append((doc_id, page_id, image_path))
+            items_to_process.append((doc_id, page_id, image_path))
         
-        # 批量处理未缓存的图像
-        if items_to_process:
-            print(f"⏳ 批量处理 {len(items_to_process)} 个新图像（batch_size=16）...")
-            image_paths = [item[2] for item in items_to_process]
-            embeddings = self._embed_images_batch(image_paths, batch_size=16)
-            
-            # Save to cache and collect
-            for (doc_id, page_id, _), (global_vec, patch_vecs) in zip(items_to_process, embeddings):
-                self._save_cached_embeddings(doc_id, page_id, global_vec, patch_vecs)
-                new_page_ids.append((doc_id, page_id))
-                new_global_vectors.append(global_vec)
-                new_patch_vectors.append(patch_vecs)
+        if not items_to_process:
+            print("No new pages to add (all already indexed or invalid)")
+            return
         
-        # 添加缓存的数据
-        for doc_id, page_id, global_vec, patch_vecs in items_cached:
+        # Process pages with multiprocessing if num_workers > 1
+        if num_workers > 1:
+            print(f"⚡ Using {num_workers} parallel workers for embedding...")
+            results = self._embed_pages_multiprocess(items_to_process, num_workers)
+        else:
+            print(f"⏳ Processing {len(items_to_process)} pages (single process)...")
+            results = self._embed_pages_batch(items_to_process)
+        
+        # Collect results
+        for doc_id, page_id, global_vec, patch_vecs in results:
             new_page_ids.append((doc_id, page_id))
             new_global_vectors.append(global_vec)
             new_patch_vectors.append(patch_vecs)
         
         if not new_page_ids:
-            print("No new pages to add (all already indexed or invalid)")
+            print("No new pages successfully processed")
             return
         
         # Stack new global vectors
@@ -461,6 +567,92 @@ class ColPaliRetriever:
         )
         
         print(f"✅ Added {len(new_page_ids)} pages. Total: {len(self.store.page_ids)} pages")
+    
+    def _embed_pages_batch(self, items: List[Tuple[str, int, str]]) -> List[Tuple[str, int, np.ndarray, np.ndarray]]:
+        """
+        Embed pages in batches using the single model instance.
+        
+        Args:
+            items: List of (doc_id, page_id, image_path) tuples
+            
+        Returns:
+            List of (doc_id, page_id, global_vec, patch_vecs) tuples
+        """
+        results = []
+        batch_size = 8
+        
+        for i in range(0, len(items), batch_size):
+            batch_items = items[i:i+batch_size]
+            image_paths = [item[2] for item in batch_items]
+            
+            try:
+                embeddings = self._embed_images_batch(image_paths, batch_size=len(batch_items))
+                for (doc_id, page_id, _), (global_vec, patch_vecs) in zip(batch_items, embeddings):
+                    results.append((doc_id, page_id, global_vec, patch_vecs))
+            except Exception as e:
+                print(f"⚠️  Error processing batch: {e}")
+                # Fall back to single-image processing
+                for doc_id, page_id, image_path in batch_items:
+                    try:
+                        global_vec, patch_vecs = self._embed_image(image_path)
+                        results.append((doc_id, page_id, global_vec, patch_vecs))
+                    except Exception as e2:
+                        print(f"⚠️  Error processing {doc_id} page {page_id}: {e2}")
+        
+        return results
+    
+    def _embed_pages_multiprocess(self, items: List[Tuple[str, int, str]], num_workers: int) -> List[Tuple[str, int, np.ndarray, np.ndarray]]:
+        """
+        Embed pages using multiprocessing for speed.
+        
+        Args:
+            items: List of (doc_id, page_id, image_path) tuples
+            num_workers: Number of parallel workers
+            
+        Returns:
+            List of (doc_id, page_id, global_vec, patch_vecs) tuples
+        """
+        import multiprocessing as mp
+        import os
+        
+        # CRITICAL: Set multiprocessing start method to 'spawn' for CUDA compatibility
+        # CUDA contexts cannot be safely forked, so we must use spawn
+        try:
+            mp.set_start_method('spawn', force=True)
+        except RuntimeError:
+            # Already set, ignore
+            pass
+        
+        # Get GPU ID from device string
+        gpu_id = int(self.device.split(':')[1]) if ':' in self.device else 0
+        
+        # Split items into chunks for workers
+        chunk_size = max(1, len(items) // num_workers)
+        chunks = [items[i:i+chunk_size] for i in range(0, len(items), chunk_size)]
+        
+        # Create worker pool with model initialization
+        # Each worker will use the same GPU (gpu_id) directly
+        print(f"🚀 Creating {num_workers} workers on GPU {gpu_id} (spawn mode)...")
+        pool = mp.Pool(
+            processes=num_workers,
+            initializer=init_colpali_worker,
+            initargs=(self.model_name, gpu_id, self.max_image_size)
+        )
+        
+        try:
+            # Process chunks in parallel
+            results_chunks = pool.map(process_colpali_batch_worker, chunks)
+            
+            # Flatten results
+            results = []
+            for chunk_results in results_chunks:
+                results.extend(chunk_results)
+            
+        finally:
+            pool.close()
+            pool.join()
+        
+        return results
     
     def save(self, index_dir: Path):
         """Save index to disk (alias for persist)."""

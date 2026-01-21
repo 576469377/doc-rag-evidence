@@ -169,19 +169,21 @@ class DocRAGUIV1:
             else:
                 print(f"⚠️  OCR-Dense index not found at {ocr_dense_index_dir}")
         
-        # ColPali (vision embedding on GPU 2) - 延迟加载，只记录配置
+        # ColPali (vision embedding) - 延迟加载，只记录配置
         if self.config.colpali.get("enabled"):
             colpali_index_name = "colpali_default"
             colpali_index_dir = indices_dir / colpali_index_name
             if colpali_index_dir.exists():
                 # 不立即加载模型，只注册可用性
                 self.retrievers["colpali"] = None  # Placeholder，延迟加载
+                gpu_id = self.config.colpali.get("gpu", 0)
+                device = f"cuda:{gpu_id}"
                 self._colpali_config = {
                     "index_dir": colpali_index_dir,
                     "model_name": self.config.colpali["model"],
-                    "device": self.config.colpali.get("device", "cuda:2")
+                    "device": device
                 }
-                print(f"✅ ColPali index available (延迟加载模式)")
+                print(f"✅ ColPali index available (延迟加载模式, GPU {gpu_id})")
             else:
                 print(f"⚠️  ColPali index not found at {colpali_index_dir}")
         
@@ -387,8 +389,8 @@ class DocRAGUIV1:
                         interactive=False
                     )
                 
-                with gr.Accordion("📋 Background Tasks", open=False):
-                    gr.Markdown("View running and completed tasks. Tasks persist across UI restarts.")
+                with gr.Accordion("📋 Background Tasks", open=True):
+                    gr.Markdown("View running and completed tasks. **Click 🔄 Refresh to see latest status**.")
                     with gr.Row():
                         refresh_tasks_btn = gr.Button("🔄 Refresh Tasks", scale=1)
                         clear_tasks_btn = gr.Button("🗑️ Clear Completed", scale=1)
@@ -1317,16 +1319,21 @@ class DocRAGUIV1:
             "message": "Dense-VL index built successfully"
         }
 
-    def _run_colpali_indexing(self, task_id: str, task_manager, index_name: str, device: str, suffix: str):
+    def _run_colpali_indexing(self, task_id: str, task_manager, index_name: str, device: str, suffix: str, num_workers: int = 1):
         """Background task function for ColPali indexing."""
         from impl.index_incremental import IncrementalIndexManager
         from impl.index_colpali import ColPaliRetriever
+        import os
         
         try:
+            # Set current process as task process (for tracking)
+            current_pid = os.getpid()
+            task_manager.update_task_pid(task_id, current_pid)
+            
             # Update task
             task_manager.update_task_progress(
                 task_id,
-                current_step=f"Starting ColPali indexing on {device}...",
+                current_step=f"Starting ColPali indexing on {device} (workers={num_workers})...",
                 progress=0.0
             )
             
@@ -1339,13 +1346,28 @@ class DocRAGUIV1:
             # Update ColPali index
             task_manager.update_task_progress(
                 task_id,
-                current_step="Building ColPali index...",
+                current_step=f"Processing pages with {num_workers} workers (this may take a while)...",
                 progress=0.1
             )
+            
+            print(f"[ColPali Task {task_id}] Starting index update...")
+            print(f"[ColPali Task {task_id}] Workers: {num_workers}, GPU: {device}")
             
             result = index_manager.update_colpali_index(
                 index_name=index_name
             )
+            
+            print(f"[ColPali Task {task_id}] Index update completed: {result}")
+            
+            # Update progress after indexing completes
+            task_manager.update_task_progress(
+                task_id,
+                current_step=f"Indexing complete. Processed {result.get('new_pages', 0)} pages",
+                progress=0.7
+            )
+            
+            if result["status"] != "success":
+                raise Exception(f"Index update failed: {result.get('message', 'Unknown error')}")
             
             if result["status"] == "success":
                 task_manager.update_task_progress(
@@ -1650,10 +1672,11 @@ class DocRAGUIV1:
                     
                     # Build index name with suffix
                     index_name = f"colpali_{suffix}"
-                    device = self.config.colpali.get("device", "cuda:2")
+                    gpu_id = self.config.colpali.get("gpu", 0)
+                    device = f"cuda:{gpu_id}"
                     
                     status += f"📝 Index name: {index_name}\n"
-                    status += f"📍 Using Device: {device}\n\n"
+                    status += f"📍 Using GPU: {gpu_id} ({device})\n\n"
                     
                     # Check current index status
                     index_dir = Path(self.config.indices_dir) / index_name
@@ -1690,21 +1713,25 @@ class DocRAGUIV1:
                     # Submit as background task
                     task_id = f"index_colpali_{uuid.uuid4().hex[:8]}"
                     
+                    # Get num_workers from config
+                    num_workers = self.config.colpali.get("num_workers", 1)
+                    
                     task = self.task_manager.submit_task(
                         task_id=task_id,
                         task_type="index_colpali",
                         func=self._run_colpali_indexing,
-                        args=(index_name, device, suffix),
+                        args=(index_name, device, suffix, num_workers),
                         kwargs={},
                         total_items=total_pages,  # Use total for progress calculation
                         description=f"Building ColPali index: {index_name}"
                     )
                     
                     status += f"✅ Task submitted: {task_id}\n"
+                    status += f"   Workers: {num_workers}\n"
                     status += f"   Check 'Background Tasks' tab for progress\n\n"
                     
-                    # Estimate time based on pages to process (~0.04 sec/page)
-                    est_sec_per_page = 0.04
+                    # Estimate time based on pages to process (adjust for num_workers)
+                    est_sec_per_page = 0.04 / num_workers  # Adjust for parallel workers
                     est_minutes = int(pages_to_process * est_sec_per_page / 60)
                     est_hours = est_minutes // 60
                     est_min_remainder = est_minutes % 60

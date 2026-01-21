@@ -314,15 +314,29 @@ class IncrementalIndexManager:
             }
         
         # Initialize retriever
-        device = self.config.colpali.get("device", "cuda:2")
+        gpu_id = self.config.colpali.get("gpu", 0)
+        device = f"cuda:{gpu_id}"
+        num_workers = self.config.colpali.get("num_workers", 1)
+        
+        # Use lazy_load if multiprocessing (main process doesn't need model)
+        lazy_load = (num_workers > 1)
+        
         retriever = ColPaliRetriever(
             model_name=self.config.colpali["model"],
             device=device,
-            max_global_pool_pages=self.config.colpali.get("max_global_pool", 100)
+            max_global_pool_pages=self.config.colpali.get("max_global_pool", 100),
+            lazy_load=lazy_load
         )
         
-        # Load existing index if not rebuilding
-        if not force_rebuild and index_dir.exists():
+        # Check if index files actually exist (not just the directory)
+        index_files_exist = (
+            index_dir.exists() and 
+            (index_dir / "colpali_global.faiss").exists() and
+            (index_dir / "colpali_page_ids.json").exists()
+        )
+        
+        # Load existing index if not rebuilding and index files exist
+        if not force_rebuild and index_files_exist:
             retriever.load_instance(index_dir)
             existing_pages = len(retriever.store.page_ids)
             print(f"📚 Loaded existing index: {existing_pages} pages")
@@ -330,6 +344,8 @@ class IncrementalIndexManager:
             existing_pages = 0
             if force_rebuild:
                 print("🔄 Force rebuild: starting from scratch")
+            elif index_dir.exists() and not index_files_exist:
+                print("⚠️  Index directory exists but files incomplete, starting from scratch")
         
         # Build page list for new documents
         new_page_list = []
@@ -351,8 +367,8 @@ class IncrementalIndexManager:
             }
         
         # Add new pages to index
-        print(f"🔨 Encoding {len(new_page_list)} new pages on {device}...")
-        retriever.add_pages(new_page_list, self.config)
+        print(f"🔨 Encoding {len(new_page_list)} new pages on {device} (workers={num_workers})...")
+        retriever.add_pages(new_page_list, self.config, num_workers=num_workers)
         
         # Save
         retriever.save(index_dir)

@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/)
 [![Gradio](https://img.shields.io/badge/gradio-6.2.0-orange.svg)](https://gradio.app/)
 
-**当前版本**：V1.2 (2026-01) | [版本详情](VERSION.md)
+**当前版本**：V1.2.1 (2026-01) | [版本详情](VERSION.md)
 
 ---
 
@@ -203,7 +203,7 @@ bash scripts/start_ui.sh
 |-------|------|--------|------|
 | **Flash Attention 2** | 优化注意力计算 | ~2x | 自动检测，无则降级 |
 | **图像压缩** | 长边压缩至1024px | ~2x | 可配置 1024/2048/原图 |
-| **并行索引** | 多worker GPU共享 | ~4x | 默认4 worker (24GB GPU) |
+| **并行索引** | 多worker GPU共享 | ~4x | Dense-VL: 4 workers<br>ColPali: 2 workers |
 | **总计** | - | **8-12x** | 实测56页：140s → 15s |
 
 **配置示例** (configs/app.yaml):
@@ -212,10 +212,13 @@ bash scripts/start_ui.sh
 colpali:
   enabled: true
   model: "/workspace/cache/tomoro-colqwen3-embed-4b"
-  device: "cuda:2"
+  gpu: 2                    # GPU device ID (0-7)
   batch_size: 8
   max_global_pool: 100
   max_image_size: 1024      # 图像 resize，节省显存
+  num_workers: 2            # 并行 worker 数量（multiprocessing）
+                            # 2 workers for 24GB GPU (~16GB)
+                            # 1 worker for 12GB GPU (~8GB)
 
 # Dense-VL 配置（多模态检索）
 dense_vl:
@@ -444,6 +447,14 @@ llm:
 - [x] **Hybrid 扩展** - 支持 Dense-VL 混合检索
 - [x] **Hit Normalization** - 页面→块级自动扩展
 
+### V1.2.1 - ColPali 多进程优化（已完成 ✅）
+
+- [x] **ColPali Multiprocessing** - 支持多 worker 并行索引（2x 加速）
+- [x] **GPU 配置标准化** - 统一使用 `gpu: N` 格式
+- [x] **CUDA 兼容性** - 使用 spawn 模式避免 fork 冲突
+- [x] **任务管理增强** - PID 跟踪防止任务超时误判
+- [x] **懒加载优化** - 主进程不加载模型节省显存
+
 ### V1.3 - 体验优化（进行中）
 
 - [ ] **Dense-VL API 模式** - vLLM/SGLang 在线服务
@@ -471,8 +482,8 @@ llm:
 
 <div align="center">
 
-**最后更新**：2026-01-18  
-**当前版本**：V1.2 - Dense-VL 多模态检索 + 显存优化
+**最后更新**：2026-01-21  
+**当前版本**：V1.2.1 - Dense-VL + ColPali 多进程优化
 
 [🏠 首页](README.md) • [📜 版本说明](VERSION.md) • [🐛 报告问题](https://github.com/your-org/doc-rag-evidence/issues)
 
