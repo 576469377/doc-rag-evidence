@@ -317,14 +317,15 @@ class IncrementalIndexManager:
         gpu_id = self.config.colpali.get("gpu", 0)
         device = f"cuda:{gpu_id}"
         num_workers = self.config.colpali.get("num_workers", 1)
-        
+
         # Use lazy_load if multiprocessing (main process doesn't need model)
         lazy_load = (num_workers > 1)
-        
+
         retriever = ColPaliRetriever(
             model_name=self.config.colpali["model"],
             device=device,
             max_global_pool_pages=self.config.colpali.get("max_global_pool", 100),
+            max_image_size=self.config.colpali.get("max_image_size", None),
             lazy_load=lazy_load
         )
         
@@ -366,11 +367,13 @@ class IncrementalIndexManager:
                 "new_pages": 0
             }
         
-        # Add new pages to index
+        # Add new pages to index with periodic saving
+        save_every = 10  # Save checkpoint every 10 documents
         print(f"🔨 Encoding {len(new_page_list)} new pages on {device} (workers={num_workers})...")
-        retriever.add_pages(new_page_list, self.config, num_workers=num_workers)
-        
-        # Save
+        print(f"💾 Checkpoint every {save_every} documents\n")
+        retriever.add_pages(new_page_list, self.config, num_workers=num_workers, save_every=save_every)
+
+        # Final save
         retriever.save(index_dir)
         tracker.save()
         

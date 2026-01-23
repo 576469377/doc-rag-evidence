@@ -267,10 +267,22 @@ class DenseVLRetrieverLazy:
         
         # Build hits
         hits = []
+        index_size = self.index.ntotal  # FAISS index size
+        page_ids_size = len(self.page_ids)  # page_ids list size
+
+        # Debug: Check for size mismatch
+        if index_size != page_ids_size:
+            print(f"⚠️  Dense-VL index size mismatch: FAISS has {index_size} vectors, but page_ids has {page_ids_size} entries")
+
         for rank, (dist, idx) in enumerate(zip(distances[0], indices[0])):
             if idx == -1:
                 continue
-            
+
+            # Boundary check
+            if idx >= page_ids_size or idx < 0:
+                print(f"⚠️  Dense-VL: FAISS returned invalid index {idx}, page_ids size is {page_ids_size}")
+                continue
+
             doc_id, page_id = self.page_ids[idx]
             
             # Apply doc filter from query if present
@@ -310,7 +322,7 @@ class DenseVLRetrieverLazy:
     ) -> "DenseVLRetrieverLazy":
         """
         Load index and prepare lazy model loading.
-        
+
         Args:
             index_dir: Directory containing FAISS index
             model_path: Path to VL model checkpoint
@@ -318,20 +330,24 @@ class DenseVLRetrieverLazy:
             gpu_memory: GPU memory utilization
             batch_size: Batch size for embeddings
             max_image_size: Max image size (px) on longest side
-            
+
         Returns:
             DenseVLRetrieverLazy instance with loaded index
         """
+        import os
         index_dir = Path(index_dir)
-        
+
         if not faiss:
             raise ImportError("faiss-cpu or faiss-gpu is required")
-        
+
         # Load metadata
         meta_path = index_dir / "metadata.json"
+        if not meta_path.exists():
+            raise FileNotFoundError(f"Metadata file not found: {meta_path}")
+
         with open(meta_path, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
-        
+
         # Create lazy embedder (model not loaded yet)
         embedder = VLEmbedderLazy(
             model_path=model_path,
@@ -340,7 +356,7 @@ class DenseVLRetrieverLazy:
             batch_size=batch_size,
             max_image_size=max_image_size
         )
-        
+
         # Create retriever instance
         retriever = cls(
             embedder=embedder,
@@ -348,19 +364,42 @@ class DenseVLRetrieverLazy:
             nlist=metadata["nlist"],
             nprobe=metadata["nprobe"]
         )
-        
+
         # Load FAISS index
         index_path = index_dir / "dense_vl.index"
+        if not index_path.exists():
+            raise FileNotFoundError(f"FAISS index file not found: {index_path}")
+
         index = faiss.read_index(str(index_path))
-        
+
+        # Sanity check: verify index and metadata are consistent
+        faiss_size = index.ntotal
+        metadata_size = metadata.get("num_pages", len(metadata.get("page_ids", [])))
+
+        if faiss_size != metadata_size:
+            print(f"⚠️  Dense-VL Warning: Index size mismatch detected!")
+            print(f"   FAISS index has {faiss_size} vectors")
+            print(f"   Metadata has {metadata_size} pages")
+            print(f"   Using minimum size: {min(faiss_size, metadata_size)}")
+
+            # Truncate to the smaller size to prevent index errors
+            safe_size = min(faiss_size, metadata_size)
+            if safe_size < faiss_size:
+                # Cannot truncate FAISS index, warn user
+                print(f"   ⚠️  FAISS index is larger, some pages may be inaccessible")
+            else:
+                # Truncate page_ids to match FAISS index
+                metadata["page_ids"] = metadata["page_ids"][:safe_size]
+                print(f"   ✅ Truncated page_ids to {safe_size} to match FAISS index")
+
         # Set nprobe for IVF index
         if hasattr(index, 'nprobe'):
             index.nprobe = metadata["nprobe"]
-        
+
         retriever.index = index
         retriever.page_ids = [tuple(p) for p in metadata["page_ids"]]
         retriever.page_metadata = metadata["page_metadata"]
-        
+
         print(f"✅ Loaded Dense-VL index: {index.ntotal} pages (model will load on first query)")
-        
+
         return retriever

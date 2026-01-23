@@ -77,8 +77,9 @@ colpali:
   gpu: 2                            # GPU device ID (0, 1, 2, etc.)
   batch_size: 8                     # Batch size for inference
   max_global_pool: 100              # Coarse stage top-N
-  max_image_size: 1024              # Max image size (px) on longest side
-                                    # 1024=fast, 2048=quality, null=original
+  max_image_size: 768               # Max image size (px) on longest side
+                                    # 512=very fast, 768=balanced, 1024=good
+                                    # 2048=quality, null=original
   num_workers: 2                    # Parallel workers for indexing (multiprocessing)
                                     # Each worker uses ~8-9GB GPU memory
                                     # Main process does NOT load model (lazy_load=True)

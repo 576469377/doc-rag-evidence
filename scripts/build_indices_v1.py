@@ -16,8 +16,6 @@ from core.schemas import AppConfig, IndexUnit
 from infra.store_local import DocumentStoreLocal
 from impl.index_bm25 import BM25IndexerRetriever
 from impl.index_dense import DenseIndexerRetriever, SGLangEmbedder
-from impl.index_colpali import ColPaliRetriever
-from impl.index_dense_vl import VLEmbedder, DenseVLRetriever
 
 
 def load_config(config_path: str) -> AppConfig:
@@ -141,101 +139,52 @@ def build_dense_index(config: AppConfig, store: DocumentStoreLocal):
 def build_colpali_index(config: AppConfig, store: DocumentStoreLocal):
     """Build ColPali vision index."""
     print("\n=== Building ColPali Vision Index ===")
-    
+
     colpali_config = config.colpali
     if not colpali_config.get("enabled"):
         print("ColPali retrieval not enabled in config. Set colpali.enabled=true")
         return
-    
-    # Collect page images
-    page_images = []
-    docs = store.list_documents()
-    
-    for meta in docs:
-        doc_id = meta.doc_id
-        
-        for page_id in range(meta.page_count):
-            artifact = store.load_page_artifact(doc_id, page_id)
-            if artifact and artifact.image_path:
-                page_images.append((doc_id, page_id, artifact.image_path))
-    
-    print(f"Found {len(page_images)} page images")
-    
-    if not page_images:
-        print("No page images found. Run ingestion with page rendering first.")
-        return
-    
-    # Create retriever
-    gpu_id = colpali_config.get("gpu", 0)
-    device = f"cuda:{gpu_id}"
-    retriever = ColPaliRetriever(
-        model_name=colpali_config["model"],
-        device=device,
-        max_global_pool_pages=colpali_config.get("max_global_pool", 100),
-        cache_dir=Path(colpali_config.get("cache_dir", "data/cache/colpali"))
-    )
-    
-    # Build index
-    retriever.build_index(page_images)
-    
-    # Persist
-    index_dir = Path(config.indices_dir) / "colpali"
-    retriever.persist(index_dir)
-    
+
+    from impl.index_incremental import IncrementalIndexManager
+
+    # Use incremental index manager for better progress tracking
+    index_manager = IncrementalIndexManager(config, store)
+
+    # Build index name
+    index_name = "colpali_default"
+
+    # Update index
+    result = index_manager.update_colpali_index(index_name=index_name)
+
+    print(f"ColPali index updated: {result}")
+
+    index_dir = Path(config.indices_dir) / index_name
     print(f"ColPali index saved to {index_dir}")
 
 
 def build_dense_vl_index(config: AppConfig, store: DocumentStoreLocal):
     """Build dense-vl multimodal embedding index."""
     print("\n=== Building Dense-VL Multimodal Index ===")
-    
+
     dense_vl_config = config.dense_vl
     if not dense_vl_config.get("enabled"):
         print("Dense-VL retrieval not enabled in config. Set dense_vl.enabled=true")
         return
-    
-    # Collect page images with captions
-    page_images = []
-    docs = store.list_documents()
-    
-    for meta in docs:
-        doc_id = meta.doc_id
-        
-        for page_id in range(meta.page_count):
-            artifact = store.load_page_artifact(doc_id, page_id)
-            if artifact and artifact.image_path:
-                # Use page text as caption
-                caption = artifact.text.text if artifact.text else ""
-                page_images.append((doc_id, page_id, artifact.image_path, caption))
-    
-    print(f"Found {len(page_images)} page images")
-    
-    if not page_images:
-        print("No page images found. Run ingestion with page rendering first.")
-        return
-    
-    # Create embedder
-    embedder = VLEmbedder(
-        endpoint=dense_vl_config["endpoint"],
-        model=dense_vl_config["model"],
-        batch_size=dense_vl_config.get("batch_size", 16)
-    )
-    
-    # Create retriever
-    retriever = DenseVLRetriever(
-        embedder=embedder,
-        index_type=dense_vl_config.get("index_type", "Flat"),
-        nlist=dense_vl_config.get("nlist", 100),
-        nprobe=dense_vl_config.get("nprobe", 10)
-    )
-    
-    # Build index
-    retriever.build_index(page_images)
-    
-    # Persist
-    index_dir = Path(config.indices_dir) / "dense_vl"
-    retriever.persist(index_dir)
-    
+
+    from impl.index_incremental import IncrementalIndexManager
+
+    # Use incremental index manager for better progress tracking
+    index_manager = IncrementalIndexManager(config, store)
+
+    # Build index name
+    index_name = "dense_vl_default"
+
+    # Update index
+    result = index_manager.update_dense_vl_index(index_name=index_name)
+
+    print(f"Dense-VL index updated: {result}")
+
+    index_dir = Path(config.indices_dir) / index_name
     print(f"Dense-VL index saved to {index_dir}")
 
 

@@ -43,47 +43,71 @@ class DocRAGUIV1:
     """Enhanced Gradio UI with multi-mode retrieval."""
 
     def __init__(self, config_path: str = "configs/app.yaml"):
-        # Load config
+        # Simple progress bar using sys.stdout
+        import sys
+
+        def progress_step(step: int, total: int, message: str):
+            """Display progress step."""
+            bar_width = 40
+            filled = int(bar_width * step / total)
+            bar = "█" * filled + "░" * (bar_width - filled)
+            pct = int(100 * step / total)
+            sys.stdout.write(f"\r[{bar}] {pct}% - {message}")
+            sys.stdout.flush()
+            if step == total:
+                print()  # New line when complete
+
+        total_steps = 7  # Total initialization steps
+
+        # Step 1: Load config
+        progress_step(1, total_steps, "Loading configuration...")
         with open(config_path, "r") as f:
             config_dict = yaml.safe_load(f)
         self.config = AppConfig(**config_dict)
 
-        # Initialize infrastructure
+        # Step 2: Initialize infrastructure
+        progress_step(2, total_steps, "Initializing document store...")
         self.store = DocumentStoreLocal(self.config)
+
+        progress_step(3, total_steps, "Initializing run logger...")
         self.logger = RunLoggerLocal(self.config)
-        
-        # Initialize task manager for background processing
+
+        # Step 4: Initialize task manager
         from infra.task_manager import TaskManager
         self.task_manager = TaskManager(tasks_dir="data/tasks")
-        
-        # Initialize retrievers
+
+        # Step 5: Initialize retrievers
+        progress_step(4, total_steps, "Loading retrieval indices...")
         self.retrievers = {}
         self._init_retrievers()
-        
-        # Initialize other components
+
+        # Step 6: Initialize selector and generator
+        progress_step(5, total_steps, "Initializing evidence selector...")
         self.selector = TopKEvidenceSelector(snippet_length=500)
-        
-        # Initialize generator based on config
+
+        progress_step(6, total_steps, "Loading LLM generator...")
         generator_type = self.config.generator.get("type", "template")
         if generator_type == "qwen3_vl":
             try:
                 from impl.generator_qwen_llm import QwenLLMGenerator
                 self.generator = QwenLLMGenerator(self.config)
-                print(f"✅ Using QwenLLMGenerator")
+                self._generator_name = "QwenLLMGenerator"
             except Exception as e:
-                print(f"⚠️  Failed to load QwenLLMGenerator: {e}, falling back to template")
+                print(f"\n⚠️  Failed to load QwenLLMGenerator: {e}, falling back to template")
                 from impl.generator_template import TemplateGenerator
                 self.generator = TemplateGenerator(mode="summary")
+                self._generator_name = "TemplateGenerator"
         else:
             from impl.generator_template import TemplateGenerator
             self.generator = TemplateGenerator(mode="summary")
-            print(f"✅ Using TemplateGenerator")
-        
-        # Create pipeline (default retriever) with store for hit normalization
+            self._generator_name = "TemplateGenerator"
+
+        # Step 7: Create pipeline
+        progress_step(7, total_steps, "Building retrieval pipeline...")
         default_retriever = self.retrievers.get(self.config.retrieval_mode)
         if not default_retriever:
             default_retriever = self.retrievers.get("bm25")
-        
+
         self.pipeline = Pipeline(
             retriever=default_retriever,
             selector=self.selector,
@@ -92,12 +116,19 @@ class DocRAGUIV1:
             reranker=None,
             store=self.store  # Enable hit normalization
         )
-        
+
         # Eval runner
         self.eval_runner = EvalRunner(self.pipeline)
-        
-        print(f"UI initialized with config: {config_path}")
-        print(f"Available retrieval modes: {list(self.retrievers.keys())}")
+
+        # Print summary
+        print(f"\n{'='*60}")
+        print(f"🚀 Doc RAG Evidence System V1 - Ready!")
+        print(f"{'='*60}")
+        print(f"📁 Config: {config_path}")
+        print(f"🔍 Available modes: {', '.join(list(self.retrievers.keys()))}")
+        print(f"🤖 Generator: {self._generator_name}")
+        print(f"🎯 Default mode: {self.config.retrieval_mode}")
+        print(f"{'='*60}\n")
 
     def _init_retrievers(self):
         """Initialize available retrievers based on config."""
@@ -1323,59 +1354,132 @@ class DocRAGUIV1:
         """Background task function for ColPali indexing."""
         from impl.index_incremental import IncrementalIndexManager
         from impl.index_colpali import ColPaliRetriever
+        from impl.index_tracker import IndexTracker
         import os
-        
+        import sys
+        from io import StringIO
+
         try:
             # Set current process as task process (for tracking)
             current_pid = os.getpid()
             task_manager.update_task_pid(task_id, current_pid)
-            
+
             # Update task
             task_manager.update_task_progress(
                 task_id,
                 current_step=f"Starting ColPali indexing on {device} (workers={num_workers})...",
                 progress=0.0
             )
-            
-            # Note: ColPali uses internal model process, not subprocess
-            # So we don't have a PID to track here
-            
-            # Initialize index manager
-            index_manager = IncrementalIndexManager(self.config, self.store)
-            
-            # Update ColPali index
-            task_manager.update_task_progress(
-                task_id,
-                current_step=f"Processing pages with {num_workers} workers (this may take a while)...",
-                progress=0.1
-            )
-            
+
+            # Get initial page count for progress tracking
+            index_dir = Path(self.config.indices_dir) / index_name
+            if index_dir.exists():
+                try:
+                    tracker = IndexTracker(index_dir)
+                    initial_pages = sum(
+                        tracker.indexed_docs[d].get('page_count', 0)
+                        for d in tracker.indexed_docs
+                    )
+                except:
+                    initial_pages = 0
+            else:
+                initial_pages = 0
+
+            # Calculate expected total
+            docs = self.store.list_documents()
+            total_pages = sum(doc.page_count for doc in docs)
+            expected_new_pages = max(0, total_pages - initial_pages)
+
             print(f"[ColPali Task {task_id}] Starting index update...")
             print(f"[ColPali Task {task_id}] Workers: {num_workers}, GPU: {device}")
-            
-            result = index_manager.update_colpali_index(
-                index_name=index_name
-            )
-            
+            print(f"[ColPali Task {task_id}] Initial pages: {initial_pages}, Expected new: {expected_new_pages}")
+
+            # Capture stdout to parse progress
+            old_stdout = sys.stdout
+            sys.stdout = StringIO()
+
+            try:
+                # Initialize index manager
+                index_manager = IncrementalIndexManager(self.config, self.store)
+
+                # Update ColPali index (output will be captured)
+                result = index_manager.update_colpali_index(
+                    index_name=index_name
+                )
+
+            finally:
+                # Get captured output
+                captured_output = sys.stdout.getvalue()
+                sys.stdout = old_stdout
+
+                # Print captured output for debugging
+                print(captured_output)
+
+                # Parse progress from captured output
+                # Look for "Total: X documents, Y pages to index"
+                import re
+                for line in captured_output.split('\n'):
+                    if "Total:" in line and "documents" in line:
+                        match = re.search(r'Total:\s*(\d+)\s+documents,\s*(\d+)\s+pages', line)
+                        if match:
+                            total_docs = int(match.group(1))
+                            total_pg = int(match.group(2))
+                            task_manager.update_task_progress(
+                                task_id,
+                                current_step=f"Processing {total_docs} documents ({total_pg} pages)...",
+                                progress=0.1,
+                                total_items=total_pg
+                            )
+                    elif "Batch" in line and "Documents" in line:
+                        # Parse batch progress
+                        match = re.search(r'Documents\s+(\d+)-(\d+)\s+of\s+(\d+)', line)
+                        if match:
+                            current_doc = int(match.group(2))
+                            total_docs = int(match.group(3))
+                            progress = 0.1 + 0.6 * (current_doc / total_docs)
+                            task_manager.update_task_progress(
+                                task_id,
+                                current_step=line.strip()[:100],
+                                progress=progress
+                            )
+                    elif "[█" in line and "% - Batch complete" in line:
+                        # Parse progress bar
+                        match = re.search(r'\[(█+░*)\]\s+([\d.]+)%', line)
+                        if match:
+                            pct = float(match.group(2))
+                            progress = 0.1 + 0.6 * (pct / 100)
+                            # Extract total indexed from output
+                            total_match = re.search(r'Total indexed:\s*(\d+)\s+pages', captured_output)
+                            if total_match:
+                                indexed_pages = int(total_match.group(1))
+                                task_manager.update_task_progress(
+                                    task_id,
+                                    current_step=f"Indexed {indexed_pages} pages...",
+                                    progress=progress,
+                                    processed_items=indexed_pages
+                                )
+
             print(f"[ColPali Task {task_id}] Index update completed: {result}")
-            
+
             # Update progress after indexing completes
+            final_pages = result.get('total_pages', 0)
             task_manager.update_task_progress(
                 task_id,
                 current_step=f"Indexing complete. Processed {result.get('new_pages', 0)} pages",
-                progress=0.7
+                progress=0.8,
+                processed_items=final_pages
             )
-            
+
             if result["status"] != "success":
                 raise Exception(f"Index update failed: {result.get('message', 'Unknown error')}")
-            
+
             if result["status"] == "success":
                 task_manager.update_task_progress(
                     task_id,
                     current_step=f"Loading retriever model...",
-                    progress=0.8
+                    progress=0.9
                 )
-                
+
                 # Reload retriever
                 retriever = ColPaliRetriever(
                     model_name=self.config.colpali["model"],
@@ -1639,20 +1743,7 @@ class DocRAGUIV1:
                     
                     status += f"✅ Task submitted: {task_id}\n"
                     status += f"   Check 'Background Tasks' tab for progress\n\n"
-                    
-                    # Estimate time based on pages to process (with 4 workers: ~0.38 sec/page)
-                    est_sec_per_page = 0.38
-                    est_minutes = int(pages_to_process * est_sec_per_page / 60)
-                    est_hours = est_minutes // 60
-                    est_min_remainder = est_minutes % 60
-                    
-                    if est_hours > 0:
-                        time_str = f"~{est_hours}h {est_min_remainder}min"
-                    else:
-                        time_str = f"~{est_minutes} minutes"
-                    
-                    status += f"💡 Estimated time: {time_str} for {pages_to_process:,} pages\n"
-                    status += f"   (4 workers, incremental saving every 50 docs)\n"
+                    status += f"💡 Processing {pages_to_process:,} pages...\n"
                     status += f"   You can close this window and check progress later\n"
                     
                 except Exception as e:
@@ -1729,19 +1820,7 @@ class DocRAGUIV1:
                     status += f"✅ Task submitted: {task_id}\n"
                     status += f"   Workers: {num_workers}\n"
                     status += f"   Check 'Background Tasks' tab for progress\n\n"
-                    
-                    # Estimate time based on pages to process (adjust for num_workers)
-                    est_sec_per_page = 0.04 / num_workers  # Adjust for parallel workers
-                    est_minutes = int(pages_to_process * est_sec_per_page / 60)
-                    est_hours = est_minutes // 60
-                    est_min_remainder = est_minutes % 60
-                    
-                    if est_hours > 0:
-                        time_str = f"~{est_hours}h {est_min_remainder}min"
-                    else:
-                        time_str = f"~{est_minutes} minutes"
-                    
-                    status += f"💡 Estimated time: {time_str} for {pages_to_process:,} pages\n"
+                    status += f"💡 Processing {pages_to_process:,} pages...\n"
                     status += f"   You can close this window and check progress later\n"
                     status += f"   You can close this window and check progress later\n"
                     

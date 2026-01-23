@@ -364,17 +364,19 @@ def _embed_pages(page_images, model_path, gpu, max_image_size, num_workers, pool
 def _save_index(index_dir, embeddings, page_images, tracker, batch_doc_ids, store):
     """Save FAISS index and metadata."""
     import faiss
-    
+    import os
+
     # Build index
     embed_dim = embeddings.shape[1]
     index = faiss.IndexFlatIP(embed_dim)
     faiss.normalize_L2(embeddings)
     index.add(embeddings)
-    
+
     # Save index
     index_dir.mkdir(parents=True, exist_ok=True)
-    faiss.write_index(index, str(index_dir / "dense_vl.index"))
-    
+    index_path = index_dir / "dense_vl.index"
+    faiss.write_index(index, str(index_path))
+
     # Save metadata
     page_ids = [(doc_id, page_id) for doc_id, page_id, _, _ in page_images]
     page_metadata = {}
@@ -386,7 +388,7 @@ def _save_index(index_dir, embeddings, page_images, tracker, batch_doc_ids, stor
             "image_path": image_path,
             "text": text
         }
-    
+
     metadata = {
         "index_type": "Flat",
         "nlist": 100,
@@ -396,15 +398,31 @@ def _save_index(index_dir, embeddings, page_images, tracker, batch_doc_ids, stor
         "page_ids": page_ids,
         "page_metadata": page_metadata
     }
-    
-    with open(index_dir / "metadata.json", 'w') as f:
+
+    # Write metadata with explicit flush
+    meta_path = index_dir / "metadata.json"
+    with open(meta_path, 'w') as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
-    
+        f.flush()
+        os.fsync(f.fileno())
+
+    # Verify files were written correctly
+    if not index_path.exists():
+        raise RuntimeError(f"Failed to write FAISS index to {index_path}")
+    if not meta_path.exists():
+        raise RuntimeError(f"Failed to write metadata to {meta_path}")
+
+    # Sanity check: reload and verify
+    verify_index = faiss.read_index(str(index_path))
+    if verify_index.ntotal != len(page_ids):
+        print(f"⚠️  Warning: Saved index has {verify_index.ntotal} vectors but page_ids has {len(page_ids)} entries")
+        print(f"   This indicates a critical bug - index and metadata are out of sync!")
+
     # Mark documents as indexed AFTER successful save
     for doc_id in batch_doc_ids:
         doc = store.get_document(doc_id)
         tracker.mark_indexed(doc_id, doc.page_count, doc.page_count)
-    
+
     tracker.save()
 
 
@@ -567,36 +585,38 @@ def build_dense_vl_index(
         else:
             # Process all at once (original behavior)
             print("📦 Processing all documents at once")
-            
+
             # Collect pages
             new_page_images = _collect_pages_for_docs(doc_ids_to_index, store, config)
-            
+
             if not new_page_images:
                 print("❌ No pages to index")
                 return
-            
+
             # Combine with existing
             all_page_images = existing_page_images + new_page_images
             print(f"🔨 Total pages to embed: {len(all_page_images)}")
-            
+
             # Embed all pages (reuse worker pool)
-            all_embeddings = _embed_pages(
+            new_embeddings = _embed_pages(
                 new_page_images, model_path, gpu, max_image_size, num_workers, pool=worker_pool
             )
-        
-        # Load existing embeddings if present
-        if existing_page_images and (index_dir / "dense_vl.index").exists():
-            existing_index = faiss.read_index(str(index_dir / "dense_vl.index"))
-            existing_embeddings = np.zeros((existing_index.ntotal, existing_index.d), dtype=np.float32)
-            for i in range(existing_index.ntotal):
-                existing_embeddings[i] = existing_index.reconstruct(i)
-            all_embeddings = np.vstack([existing_embeddings, all_embeddings])
-        
+
+            # Load existing embeddings if present and merge
+            if existing_page_images and (index_dir / "dense_vl.index").exists():
+                existing_index = faiss.read_index(str(index_dir / "dense_vl.index"))
+                existing_embeddings = np.zeros((existing_index.ntotal, existing_index.d), dtype=np.float32)
+                for i in range(existing_index.ntotal):
+                    existing_embeddings[i] = existing_index.reconstruct(i)
+                all_embeddings = np.vstack([existing_embeddings, new_embeddings])
+            else:
+                all_embeddings = new_embeddings
+
             # Save index
             _save_index(index_dir, all_embeddings, all_page_images, tracker, doc_ids_to_index, store)
-        
-        print(f"✅ Index saved to {index_dir}")
-        print(f"   Total pages: {len(all_page_images)}")
+
+            print(f"✅ Index saved to {index_dir}")
+            print(f"   Total pages: {len(all_page_images)}")
     
     finally:
         # Clean up worker pool

@@ -83,7 +83,7 @@ graph TD
 ```
 
 **GPU2 共享机制**：
-- ColPali 和 Dense-VL 都支持图像 resize (max_image_size: 1024)
+- ColPali 和 Dense-VL 都支持图像 resize (max_image_size: 768/1024)
 - 显存优化后可在同一张 GPU 上运行（互斥延迟加载）
 - 适合单 GPU 资源有限场景
 
@@ -137,6 +137,7 @@ bash scripts/start_ui.sh
 
 #### 2️⃣ 构建索引
 
+**方式一：Web UI 构建**
 ```
 🔨 "Build Indices" 区域
  选择索引类型（单选，避免GPU OOM）：
@@ -144,15 +145,27 @@ bash scripts/start_ui.sh
    ○ dense       - 语义向量索引（理解能力强）
    ○ dense_vl    - 多模态索引（文本+图像理解）⭐ 新增
    ○ colpali     - 视觉索引（图表理解）
- 
+
  输入索引名称后缀（可选，默认 "default"）
  点击 "Build Index"
- 
+
 ⚡ Dense-VL 性能优化：
  • Flash Attention 2：~2x 加速
  • 图像压缩 (1024px)：~2x 加速
  • 4 worker 并行：~4x 加速
  • 总计：8-12x 实际加速
+```
+
+**方式二：命令行构建（无需启动 UI）**
+```bash
+# 构建所有索引
+python scripts/build_indices_v1.py --all
+
+# 只构建 ColPali 索引
+python scripts/build_indices_v1.py --colpali
+
+# 只构建 Dense-VL 索引
+python scripts/build_indices_v1.py --dense-vl
 ```
 
 #### 3️⃣ 开始提问
@@ -215,7 +228,7 @@ colpali:
   gpu: 2                    # GPU device ID (0-7)
   batch_size: 8
   max_global_pool: 100
-  max_image_size: 1024      # 图像 resize，节省显存
+  max_image_size: 768       # 图像 resize，节省显存 (512=快/768=平衡/1024=质量/2048=高质量)
   num_workers: 2            # 并行 worker 数量（multiprocessing）
                             # 2 workers for 24GB GPU (~16GB)
                             # 1 worker for 12GB GPU (~8GB)
@@ -231,7 +244,9 @@ dense_vl:
 ```
 
 **显存优化**：
-- `max_image_size: 1024` - 图像最长边压缩至 1024px
+- `max_image_size: 768` - 平衡模式（推荐）
+- `max_image_size: 512` - 快速模式（质量略有下降）
+- `max_image_size: 1024` - 质量模式
 - `max_image_size: 2048` - 高质量模式（需更多显存）
 - `max_image_size: null` - 使用原始大小（不推荐）
 - 优化后 ColPali + Dense-VL 可共享一张 24GB GPU
@@ -482,9 +497,9 @@ llm:
 
 <div align="center">
 
-**最后更新**：2026-01-21  
-**当前版本**：V1.2.1 - Dense-VL + ColPali 多进程优化
+**最后更新**：2026-01-23
+**当前版本**：V1.2.1 - ColPali 多进程优化
 
-[🏠 首页](README.md) • [📜 版本说明](VERSION.md) • [🐛 报告问题](https://github.com/your-org/doc-rag-evidence/issues)
+[🏠 首页](README.md) • [📜 版本说明](VERSION.md) • [📜 变更日志](CHANGELOG.md) • [🐛 报告问题](https://github.com/your-org/doc-rag-evidence/issues)
 
 </div>

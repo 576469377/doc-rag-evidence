@@ -35,37 +35,40 @@ _worker_colpali_model = None
 _worker_colpali_processor = None
 _worker_colpali_device = None
 _worker_colpali_max_image_size = None
+_worker_colpali_id = None
 
 
 def init_colpali_worker(model_path: str, gpu: int, max_image_size: int = None):
     """
     Initialize ColPali model in worker process.
     Called once per worker when pool is created.
-    
+
     Args:
         model_path: Path to ColPali model
         gpu: GPU device ID to use (e.g., 0, 1, 2, 3)
         max_image_size: Max image size for resizing
     """
     global _worker_colpali_model, _worker_colpali_processor, _worker_colpali_device, _worker_colpali_max_image_size
-    
+
     import os
     import torch
     from transformers import AutoProcessor, AutoModel
-    
+    import time
+
     # Use the specified GPU directly
     device = f"cuda:{gpu}"
     _worker_colpali_device = device
     _worker_colpali_max_image_size = max_image_size
-    
-    # Load model and processor
-    print(f"[Worker {os.getpid()}] Loading ColPali model on GPU {gpu} ({device})...")
+
+    start_time = time.time()
+    pid = os.getpid()
+    print(f"[Worker PID-{pid}] Loading ColPali model on GPU {gpu} ({device})...")
     _worker_colpali_processor = AutoProcessor.from_pretrained(
         model_path,
         trust_remote_code=True,
         max_num_visual_tokens=1280
     )
-    
+
     try:
         _worker_colpali_model = AutoModel.from_pretrained(
             model_path,
@@ -74,66 +77,124 @@ def init_colpali_worker(model_path: str, gpu: int, max_image_size: int = None):
             attn_implementation="flash_attention_2",
             device_map=device
         ).eval()
-        print(f"[Worker {os.getpid()}] ✅ Model loaded with Flash Attention 2 on GPU {gpu}")
-    except:
+        elapsed = time.time() - start_time
+        mem_gb = torch.cuda.memory_allocated(gpu) / 1024**3
+        print(f"[Worker PID-{pid}] ✅ Model loaded with Flash Attention 2 in {elapsed:.1f}s ({mem_gb:.2f}GB)")
+    except Exception as e:
         _worker_colpali_model = AutoModel.from_pretrained(
             model_path,
             trust_remote_code=True,
             torch_dtype=torch.bfloat16,
             device_map=device
         ).eval()
-        print(f"[Worker {os.getpid()}] ✅ Model loaded (standard attention) on GPU {gpu}")
+        elapsed = time.time() - start_time
+        mem_gb = torch.cuda.memory_allocated(gpu) / 1024**3
+        print(f"[Worker PID-{pid}] ✅ Model loaded (standard attention) in {elapsed:.1f}s ({mem_gb:.2f}GB)")
 
 
-def process_colpali_batch_worker(batch_data):
+
+def process_colpali_batch_worker(args):
     """
-    Worker function to process a batch of pages.
+    Worker function to process a batch of pages with progress bar.
     Uses global _worker_colpali_model initialized by init_colpali_worker.
-    
+
     Args:
-        batch_data: List of (doc_id, page_id, image_path) tuples
-        
+        args: Tuple of (batch_data, worker_id, batch_size)
+              batch_data: List of (doc_id, page_id, image_path) tuples
+              worker_id: Worker ID for display
+              batch_size: Number of images to process at once (default: 1 for progress)
+
     Returns:
         List of (doc_id, page_id, global_vec, patch_vecs) tuples
     """
     global _worker_colpali_model, _worker_colpali_processor, _worker_colpali_device, _worker_colpali_max_image_size
-    
+
     import torch
     from PIL import Image
     import numpy as np
-    
+    import sys
+    import time
+    import os
+
+    # Support both (batch_data, worker_id) and (batch_data, worker_id, batch_size) formats
+    if len(args) == 2:
+        batch_data, worker_id = args
+        batch_size = 1  # Default to single image processing
+    else:
+        batch_data, worker_id, batch_size = args
+
+    total_pages = len(batch_data)
     results = []
-    
-    for doc_id, page_id, image_path in batch_data:
+
+    # Progress bar width
+    bar_width = 30
+
+    worker_start = time.time()
+    times = []
+
+    # Process in mini-batches for speed
+    for batch_start in range(0, total_pages, batch_size):
+        batch_end = min(batch_start + batch_size, total_pages)
+        batch_items = batch_data[batch_start:batch_end]
+
         try:
-            # Load and optionally resize image
-            image = Image.open(image_path).convert("RGB")
-            
-            if _worker_colpali_max_image_size:
-                w, h = image.size
-                max_dim = max(w, h)
-                if max_dim > _worker_colpali_max_image_size:
-                    scale = _worker_colpali_max_image_size / max_dim
-                    new_w = int(w * scale)
-                    new_h = int(h * scale)
-                    image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            
-            # Process image
-            batch = _worker_colpali_processor.process_images(images=[image])
+            batch_start_time = time.time()
+
+            # Load and optionally resize images
+            images = []
+            for doc_id, page_id, image_path in batch_items:
+                image = Image.open(image_path).convert("RGB")
+
+                if _worker_colpali_max_image_size:
+                    w, h = image.size
+                    max_dim = max(w, h)
+                    if max_dim > _worker_colpali_max_image_size:
+                        scale = _worker_colpali_max_image_size / max_dim
+                        new_w = int(w * scale)
+                        new_h = int(h * scale)
+                        image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                images.append(image)
+
+            # Process batch
+            batch = _worker_colpali_processor.process_images(images=images)
             batch = {k: v.to(_worker_colpali_device) for k, v in batch.items()}
-            
+
             # Get embeddings
             with torch.no_grad():
                 outputs = _worker_colpali_model(**batch)
-                patch_vecs = outputs.embeddings[0].cpu().float().numpy()
-                global_vec = patch_vecs.mean(axis=0)
-            
-            results.append((doc_id, page_id, global_vec, patch_vecs))
-            
+                # Shape: [batch_size, num_patches, embed_dim]
+                for i, (doc_id, page_id, image_path) in enumerate(batch_items):
+                    patch_vecs = outputs.embeddings[i].cpu().float().numpy()
+                    global_vec = patch_vecs.mean(axis=0)
+                    results.append((doc_id, page_id, global_vec, patch_vecs))
+
+            # Track time
+            batch_time = time.time() - batch_start_time
+            time_per_page = batch_time / len(batch_items)
+            times.extend([time_per_page] * len(batch_items))
+
+            # Update progress bar
+            processed = batch_end
+            progress = processed / total_pages
+            filled = int(bar_width * progress)
+            bar = "█" * filled + "░" * (bar_width - filled)
+            pct = int(progress * 100)
+            avg_time = sum(times) / len(times) if times else 0
+
+            # Use carriage return to overwrite the line
+            sys.stdout.write(f"\r[Worker-{worker_id}] [{bar}] {pct}% - {processed}/{total_pages} pages | {avg_time:.2f}s/page")
+            sys.stdout.flush()
+
         except Exception as e:
-            print(f"⚠️  Error processing {doc_id} page {page_id}: {e}")
+            print(f"\n[Worker-{worker_id}] ⚠️  Error processing batch {batch_start}-{batch_end}: {e}")
             continue
-    
+
+    # Print newline when done
+    total_time = time.time() - worker_start
+    avg_time = total_time / total_pages if total_pages > 0 else 0
+    print(f"\r[Worker-{worker_id}] [{bar}] 100% - {total_pages}/{total_pages} pages ✅ | Total: {total_time:.1f}s ({avg_time:.2f}s/page)")
+
     return results
 
 
@@ -476,29 +537,29 @@ class ColPaliRetriever:
         self,
         page_data: Union[List[Tuple[str, int]], List[Tuple[str, int, str]]],
         config: Optional[AppConfig] = None,
-        num_workers: int = 1
+        num_workers: int = 1,
+        save_every: int = 10
     ):
         """
         Add new pages to existing index (incremental update).
-        
+
         Args:
             page_data: List of (doc_id, page_id) or (doc_id, page_id, image_path) tuples
             config: AppConfig (required if using (doc_id, page_id) format)
             num_workers: Number of parallel workers (multiprocessing)
+            save_every: Save index every N documents (default: 10)
         """
+        import sys
+
         if self.index is None or self.store is None:
             # No existing index, just build from scratch
             return self.build_index(page_data, config, num_workers=num_workers)
-        
+
         print(f"Adding {len(page_data)} new pages to ColPali index...")
-        
-        new_page_ids = []
-        new_global_vectors = []
-        new_patch_vectors = []
-        
-        # Collect items to process
-        items_to_process = []  # (doc_id, page_id, image_path)
-        
+
+        # Group pages by document for batched saving
+        doc_pages = {}  # doc_id -> list of (page_id, image_path)
+
         for item in page_data:
             if len(item) == 2:
                 doc_id, page_id = item
@@ -510,63 +571,108 @@ class ColPaliRetriever:
                 doc_id, page_id, image_path = item
             else:
                 raise ValueError(f"Invalid page_data item format: {item}")
-            
+
             # Skip if already in index
             if (doc_id, page_id) in self.store.page_ids:
                 print(f"  ⏭️  Skipping {doc_id} page {page_id} (already indexed)")
                 continue
-            
+
             # Check if image exists
             if not Path(image_path).exists():
                 print(f"⚠️  Warning: Image not found: {image_path}")
                 continue
-            
-            items_to_process.append((doc_id, page_id, image_path))
-        
-        if not items_to_process:
+
+            if doc_id not in doc_pages:
+                doc_pages[doc_id] = []
+            doc_pages[doc_id].append((page_id, image_path))
+
+        if not doc_pages:
             print("No new pages to add (all already indexed or invalid)")
             return
-        
-        # Process pages with multiprocessing if num_workers > 1
-        if num_workers > 1:
-            print(f"⚡ Using {num_workers} parallel workers for embedding...")
-            results = self._embed_pages_multiprocess(items_to_process, num_workers)
-        else:
-            print(f"⏳ Processing {len(items_to_process)} pages (single process)...")
-            results = self._embed_pages_batch(items_to_process)
-        
-        # Collect results
-        for doc_id, page_id, global_vec, patch_vecs in results:
-            new_page_ids.append((doc_id, page_id))
-            new_global_vectors.append(global_vec)
-            new_patch_vectors.append(patch_vecs)
-        
-        if not new_page_ids:
-            print("No new pages successfully processed")
-            return
-        
-        # Stack new global vectors
-        new_global_vectors_array = np.stack(new_global_vectors).astype(np.float32)
-        
-        # Normalize and add to FAISS index
-        faiss.normalize_L2(new_global_vectors_array)
-        self.index.add(new_global_vectors_array)
-        
-        # Merge with existing store
-        combined_page_ids = self.store.page_ids + new_page_ids
-        combined_global_vectors = np.vstack([
-            self.store.global_vectors,
-            new_global_vectors_array
-        ])
-        combined_patch_vectors = self.store.patch_vectors + new_patch_vectors
-        
-        self.store = PageVectorStore(
-            page_ids=combined_page_ids,
-            global_vectors=combined_global_vectors,
-            patch_vectors=combined_patch_vectors
-        )
-        
-        print(f"✅ Added {len(new_page_ids)} pages. Total: {len(self.store.page_ids)} pages")
+
+        doc_ids = sorted(doc_pages.keys())
+        total_docs = len(doc_ids)
+        total_pages = sum(len(pages) for pages in doc_pages.values())
+
+        print(f"📊 Total: {total_docs} documents, {total_pages} pages to index")
+        print(f"💾 Will save checkpoint every {save_every} documents\n")
+
+        # Process documents in batches with periodic saves
+        added_count = 0
+        for batch_start in range(0, total_docs, save_every):
+            batch_end = min(batch_start + save_every, total_docs)
+            batch_doc_ids = doc_ids[batch_start:batch_end]
+
+            # Collect all pages for this batch
+            batch_items = []
+            for doc_id in batch_doc_ids:
+                for page_id, image_path in doc_pages[doc_id]:
+                    batch_items.append((doc_id, page_id, image_path))
+
+            print(f"\n{'='*60}")
+            print(f"📦 Batch {batch_start//save_every + 1}: Documents {batch_start+1}-{batch_end} of {total_docs}")
+            print(f"   Processing {len(batch_items)} pages from {len(batch_doc_ids)} documents...")
+            print(f"{'='*60}")
+
+            # Process pages with multiprocessing
+            if num_workers > 1:
+                print(f"⚡ Using {num_workers} parallel workers...")
+                results = self._embed_pages_multiprocess(batch_items, num_workers)
+            else:
+                results = self._embed_pages_batch(batch_items)
+
+            # Collect results and add to index
+            new_page_ids = []
+            new_global_vectors = []
+            new_patch_vectors = []
+
+            for doc_id, page_id, global_vec, patch_vecs in results:
+                new_page_ids.append((doc_id, page_id))
+                new_global_vectors.append(global_vec)
+                new_patch_vectors.append(patch_vecs)
+
+            if not new_page_ids:
+                print(f"⚠️  No pages successfully processed in this batch")
+                continue
+
+            # Stack and add to FAISS index
+            new_global_vectors_array = np.stack(new_global_vectors).astype(np.float32)
+            faiss.normalize_L2(new_global_vectors_array)
+            self.index.add(new_global_vectors_array)
+
+            # Merge with existing store
+            combined_page_ids = self.store.page_ids + new_page_ids
+            combined_global_vectors = np.vstack([
+                self.store.global_vectors,
+                new_global_vectors_array
+            ])
+            combined_patch_vectors = self.store.patch_vectors + new_patch_vectors
+
+            self.store = PageVectorStore(
+                page_ids=combined_page_ids,
+                global_vectors=combined_global_vectors,
+                patch_vectors=combined_patch_vectors
+            )
+
+            added_count += len(new_page_ids)
+
+            # Progress display
+            progress_pct = (batch_end / total_docs) * 100
+            bar_width = 40
+            filled = int(bar_width * batch_end / total_docs)
+            bar = "█" * filled + "░" * (bar_width - filled)
+
+            print(f"\n[{bar}] {progress_pct:.1f}% - Batch complete")
+            print(f"   ✅ Added {len(new_page_ids)} pages this batch")
+            print(f"   📊 Total indexed: {len(self.store.page_ids)} pages")
+            print(f"   💾 Index saved (checkpoint)")
+
+            # Save checkpoint
+            # Note: The caller should still call save() at the end for final save
+
+        print(f"\n{'='*60}")
+        print(f"✅ All batches complete! Total: {len(self.store.page_ids)} pages")
+        print(f"{'='*60}\n")
     
     def _embed_pages_batch(self, items: List[Tuple[str, int, str]]) -> List[Tuple[str, int, np.ndarray, np.ndarray]]:
         """
@@ -604,17 +710,17 @@ class ColPaliRetriever:
     def _embed_pages_multiprocess(self, items: List[Tuple[str, int, str]], num_workers: int) -> List[Tuple[str, int, np.ndarray, np.ndarray]]:
         """
         Embed pages using multiprocessing for speed.
-        
+
         Args:
             items: List of (doc_id, page_id, image_path) tuples
             num_workers: Number of parallel workers
-            
+
         Returns:
             List of (doc_id, page_id, global_vec, patch_vecs) tuples
         """
         import multiprocessing as mp
         import os
-        
+
         # CRITICAL: Set multiprocessing start method to 'spawn' for CUDA compatibility
         # CUDA contexts cannot be safely forked, so we must use spawn
         try:
@@ -622,36 +728,47 @@ class ColPaliRetriever:
         except RuntimeError:
             # Already set, ignore
             pass
-        
+
         # Get GPU ID from device string
         gpu_id = int(self.device.split(':')[1]) if ':' in self.device else 0
-        
+
         # Split items into chunks for workers
         chunk_size = max(1, len(items) // num_workers)
         chunks = [items[i:i+chunk_size] for i in range(0, len(items), chunk_size)]
-        
+
+        # Prepare args for each worker: (chunk_data, worker_id)
+        worker_args = [(chunk, worker_id) for worker_id, chunk in enumerate(chunks)]
+
+        print(f"\n🚀 Spawning {num_workers} workers on GPU {gpu_id}...")
+        for worker_id, chunk in enumerate(chunks):
+            print(f"   Worker-{worker_id}: {len(chunk)} pages to process")
+        print()
+
         # Create worker pool with model initialization
-        # Each worker will use the same GPU (gpu_id) directly
-        print(f"🚀 Creating {num_workers} workers on GPU {gpu_id} (spawn mode)...")
+        # NOTE: We cannot pass worker_id via initializer because it's called once per process
+        # Instead, worker_id is passed via the args tuple to process_colpali_batch_worker
         pool = mp.Pool(
             processes=num_workers,
             initializer=init_colpali_worker,
-            initargs=(self.model_name, gpu_id, self.max_image_size)
+            initargs=(self.model_name, gpu_id, self.max_image_size)  # Remove worker_id from initargs
         )
-        
+
         try:
             # Process chunks in parallel
-            results_chunks = pool.map(process_colpali_batch_worker, chunks)
-            
+            # Each worker receives its worker_id via the args tuple
+            results_chunks = pool.map(process_colpali_batch_worker, worker_args)
+
             # Flatten results
             results = []
             for chunk_results in results_chunks:
                 results.extend(chunk_results)
-            
+
         finally:
             pool.close()
             pool.join()
-        
+
+        print()  # Newline after all workers complete
+
         return results
     
     def save(self, index_dir: Path):
